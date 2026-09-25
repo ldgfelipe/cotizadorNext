@@ -1,11 +1,12 @@
-import './globals.css';
-import { Inter } from 'next/font/google';
+/* app/layout.tsx */
+import "./src/app/globals.css";
+import { Inter } from "next/font/google";
 
-const inter = Inter({ subsets: ['latin'] });
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata = {
-  title: 'Cotizador Venta Inmobiliaria ISR',
-  description: 'Cotizador de ISR por enajenación con lógica matemática Mexican Excel-based',
+  title: "Cotizador Venta Inmobiliaria ISR",
+  description: "Cotizador de ISR por enajenación con lógica matemática Mexican Excel-based",
 };
 
 export default function RootLayout({
