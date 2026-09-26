@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { createServerClient } from '@/app/services/supabaseClient';
 
 // Tarifas de créditos - pueden ser configuradas desde el panel admin
 const PAQUETES_CREDITOS = {
@@ -28,9 +27,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Crear cliente Supabase server-side
-    const supabase = createServerClient();
-
     // En un caso real, aquí integraríamos con PayPal SDK
     // Por ahora simulamos el proceso:
     
@@ -39,6 +35,7 @@ export async function POST(request: Request) {
     
     // 2. Sumar créditos al usuario (requiere usuario autenticado)
     // NOTA: Esto requiere que el usuario esté logueado en Supabase Auth
+    // const supabase = createServerClient();
     // const { error } = await supabase.from('user_credits').increment('creditos_disponibles', paquete);
     
     // Por ahora retornamos éxito simulado
