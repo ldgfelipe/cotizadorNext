@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { obtenerINPC, procesarCotizacion } from '@/lib/calculator';
+import { createServerSupabaseClient } from '@/lib/server';
 
 const CAMPOS_REQUERIDOS = [
   'fecha_venta',
@@ -77,6 +78,20 @@ export async function POST(request: Request) {
       inpcVenta,
       inpcAdquisicion
     );
+
+    // Guardar cotización en BD si hay usuario autenticado
+    const supabase = await createServerSupabaseClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (user) {
+      const { error } = await supabase.from('quote_records').insert({
+        user_id: user.id,
+        client_id: body.client_id || null,
+        input_data: body,
+        result_data: resultado,
+      });
+      if (error) console.error('Error guardando cotización:', error);
+    }
 
     return NextResponse.json({ success: true, resultado });
   } catch (error) {

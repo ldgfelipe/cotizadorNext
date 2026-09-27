@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
 interface ResultadoISR {
   base_gravable: number;
@@ -9,6 +10,14 @@ interface ResultadoISR {
   udi_usada: number;
   factor_ajuste: number;
   inpc_ratio: number;
+}
+
+interface Cliente {
+  id: string;
+  nombre: string;
+  email?: string;
+  telefono?: string;
+  rfc?: string;
 }
 
 const ESTADO_INICIAL = {
@@ -19,6 +28,7 @@ const ESTADO_INICIAL = {
   valor_terreno: '',
   valor_constr: '',
   exenta: false,
+  client_id: '',
 };
 
 const moneda = new Intl.NumberFormat('es-MX', {
@@ -32,6 +42,23 @@ export default function QuoterPage() {
   const [resultado, setResultado] = useState<ResultadoISR | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [cargandoClientes, setCargandoClientes] = useState(true);
+
+  useEffect(() => {
+    async function cargarClientes() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, nombre, email, telefono, rfc')
+        .eq('user_id', user.id)
+        .order('nombre');
+      if (!error) setClientes(data || []);
+      setCargandoClientes(false);
+    }
+    cargarClientes();
+  }, []);
 
   const actualizar = (campo: string, valor: string | boolean) => {
     setForm((previo) => ({ ...previo, [campo]: valor }));
@@ -82,6 +109,28 @@ export default function QuoterPage() {
           onSubmit={manejarEnvio}
           className="mt-8 grid gap-4 rounded-lg border border-black/10 p-6 md:grid-cols-2 dark:border-white/15"
         >
+          <label className="flex flex-col gap-1 text-sm md:col-span-2">
+            <span className="font-medium">Cliente (opcional)</span>
+            {cargandoClientes ? (
+              <select disabled className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent">
+                <option>Cargando clientes...</option>
+              </select>
+            ) : (
+              <select
+                value={form.client_id}
+                onChange={(e) => actualizar('client_id', e.target.value)}
+                className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
+              >
+                <option value="">Sin cliente asociado</option>
+                {clientes.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre} {c.email ? `(${c.email})` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </label>
+
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium">Fecha de venta</span>
             <input
