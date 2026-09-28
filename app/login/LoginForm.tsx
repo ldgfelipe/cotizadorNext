@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 interface LoginFormProps {
@@ -11,12 +10,56 @@ interface LoginFormProps {
 }
 
 export default function LoginForm({ redirect, errorInicial = null }: LoginFormProps) {
-  const router = useRouter();
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(errorInicial);
+  const [diagnostico, setDiagnostico] = useState<string | null>(null);
+
+  async function revisarSesion(): Promise<void> {
+    setDiagnostico('Revisando...');
+
+    const nombresCookies = document.cookie
+      .split('; ')
+      .map((c) => c.split('=')[0])
+      .filter((n) => n.includes('sb-') || n.includes('auth'));
+
+    let estado: string;
+    try {
+      const {
+        data: { user },
+        error: errorUsuario,
+      } = await supabase.auth.getUser();
+
+      if (errorUsuario) {
+        estado = `getUser() falló: ${errorUsuario.message}`;
+      } else if (user) {
+        estado = `Sesión válida como ${user.email}.`;
+      } else {
+        estado = 'getUser() no devuelve usuario.';
+      }
+
+      // Lo que VE EL SERVIDOR (proxy/rutas) con la misma cookie:
+      let servidor: string;
+      try {
+        const respuesta = await fetch('/api/me');
+        if (respuesta.ok) {
+          const datos = (await respuesta.json()) as { email?: string };
+          servidor = `Servidor: autenticado (${datos.email}).`;
+        } else {
+          servidor = `Servidor: NO autenticado (HTTP ${respuesta.status}).`;
+        }
+      } catch (err) {
+        servidor = `Servidor: error al consultar /api/me (${err instanceof Error ? err.message : String(err)}).`;
+      }
+
+      setDiagnostico(
+        `Cookies de sesión: ${nombresCookies.length > 0 ? nombresCookies.join(', ') : 'NINGUNA'}. ${estado} ${servidor}`
+      );
+    } catch (err) {
+      setDiagnostico(`Excepción: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
@@ -31,14 +74,25 @@ export default function LoginForm({ redirect, errorInicial = null }: LoginFormPr
 
       if (authError) {
         setError(authError.message);
+        setLoading(false);
         return;
       }
 
-      router.replace(redirect);
-      router.refresh();
+      // Confirma que la sesión quedó disponible en el cliente.
+      const { data } = await supabase.auth.getUser();
+
+      if (!data.user) {
+        setError(
+          'La sesión no quedó disponible en el navegador. Usa "Verificar sesión" para diagnosticar.'
+        );
+        setLoading(false);
+        return;
+      }
+
+      // Navegación dura: fuerza una petición nueva para que el proxy lea la cookie.
+      window.location.assign(redirect.startsWith('/') ? redirect : '/dashboard');
     } catch {
-      setError('Error de conexión');
-    } finally {
+      setError('Error de conexión o de navegación. Intenta de nuevo.');
       setLoading(false);
     }
   }
@@ -61,6 +115,7 @@ export default function LoginForm({ redirect, errorInicial = null }: LoginFormPr
             <input
               type="email"
               required
+              autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
@@ -72,16 +127,25 @@ export default function LoginForm({ redirect, errorInicial = null }: LoginFormPr
             <input
               type="password"
               required
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
             />
           </label>
 
-          {error && (
-            <p className="rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          {(error || diagnostico) && (
+            <div
+              className={
+                'rounded border px-4 py-3 text-sm ' +
+                (diagnostico
+                  ? 'border-slate-500/40 bg-slate-500/10'
+                  : 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400')
+              }
+            >
               {error}
-            </p>
+              {diagnostico && <p className="mt-1 font-mono text-xs opacity-90">{diagnostico}</p>}
+            </div>
           )}
 
           <button
@@ -92,6 +156,15 @@ export default function LoginForm({ redirect, errorInicial = null }: LoginFormPr
             {loading ? 'Entrando...' : 'Entrar'}
           </button>
         </form>
+
+        <button
+          type="button"
+          onClick={revisarSesion}
+          disabled={loading}
+          className="mt-3 text-xs text-slate-500 underline hover:text-slate-700"
+        >
+          ¿Problemas? Verificar sesión
+        </button>
 
         <p className="mt-6 text-sm text-center">
           ¿No tienes cuenta?{' '}

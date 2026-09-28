@@ -2,12 +2,9 @@
 
 import Link from 'next/link';
 import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
 export default function RegisterPage() {
-  const router = useRouter();
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -37,9 +34,10 @@ export default function RegisterPage() {
 
       // Si hay sesión, el email no requiere confirmación: entrar directo.
       if (data.session) {
-        router.push('/dashboard');
-        router.refresh();
-        return;
+// Navegación dura: fuerza una petición nueva para que el proxy lea la cookie.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign('/dashboard');
+      return;
       }
 
       setConfirmado(true);
