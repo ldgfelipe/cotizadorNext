@@ -101,7 +101,7 @@ export async function obtenerUDIActual(): Promise<{ valor_udi: number; fecha: st
   return { valor_udi: 35.85, fecha: new Date().toISOString().split('T')[0] };
 }
 
-export async function obtenerINPC(fecha: string): Promise<number> {
+export async function obtenerINPC(_fecha: string): Promise<number> {
   // En producción haría fetch a la API de Banxico por fecha histórica
   // Por ahora retorno valores representativos 2024
   return 125.50; // INPC representativo 2024

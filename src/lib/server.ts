@@ -1,12 +1,10 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
 
-export async function createServerSupabaseClient(request?: NextRequest) {
+export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
 
-  const supabase = createServerClient(
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -16,26 +14,16 @@ export async function createServerSupabaseClient(request?: NextRequest) {
         },
         setAll(cookiesToSet) {
           try {
-            for (const { name, value, options } of cookiesToSet) {
+            cookiesToSet.forEach(({ name, value, options }) => {
               cookieStore.set(name, value, options);
-            }
+            });
           } catch {
-            // Cookies can't be set in middleware context; ignore.
+            // Solo escribible desde Server Actions / Route Handlers.
           }
         },
       },
     }
   );
-
-  return supabase;
-}
-
-export async function getSession() {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  return session;
 }
 
 export async function getUser() {

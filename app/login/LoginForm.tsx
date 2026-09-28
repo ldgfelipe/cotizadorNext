@@ -7,15 +7,16 @@ import { supabase } from '@/lib/supabase';
 
 interface LoginFormProps {
   redirect: string;
+  errorInicial?: string | null;
 }
 
-export default function LoginForm({ redirect }: LoginFormProps) {
+export default function LoginForm({ redirect, errorInicial = null }: LoginFormProps) {
   const router = useRouter();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(errorInicial);
 
   async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
@@ -33,7 +34,7 @@ export default function LoginForm({ redirect }: LoginFormProps) {
         return;
       }
 
-      router.push(redirect);
+      router.replace(redirect);
       router.refresh();
     } catch {
       setError('Error de conexión');

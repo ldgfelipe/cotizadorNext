@@ -13,6 +13,7 @@ export default function RegisterPage() {
   const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmado, setConfirmado] = useState(false);
 
   async function handleSubmit(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
@@ -20,11 +21,12 @@ export default function RegisterPage() {
     setError(null);
 
     try {
-      const { error: authError } = await supabase.auth.signUp({
+      const { data, error: authError } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: { full_name: fullName },
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
       });
 
@@ -33,13 +35,39 @@ export default function RegisterPage() {
         return;
       }
 
-      router.push('/dashboard');
-      router.refresh();
+      // Si hay sesión, el email no requiere confirmación: entrar directo.
+      if (data.session) {
+        router.push('/dashboard');
+        router.refresh();
+        return;
+      }
+
+      setConfirmado(true);
     } catch {
       setError('Error de conexión');
     } finally {
       setLoading(false);
     }
+  }
+
+  if (confirmado) {
+    return (
+      <main className="min-h-screen flex items-center justify-center p-6">
+        <div className="w-full max-w-md text-center">
+          <h1 className="text-3xl font-bold">Revisa tu correo</h1>
+          <p className="mt-2 text-sm opacity-70">
+            Enviamos un enlace de confirmación a <strong>{email}</strong>. Ábrelo para
+            activar tu cuenta. Después podrás iniciar sesión.
+          </p>
+          <Link
+            href="/login"
+            className="mt-6 inline-block rounded bg-blue-600 px-5 py-2.5 font-medium text-white transition-colors hover:bg-blue-700"
+          >
+            Ir a iniciar sesión
+          </Link>
+        </div>
+      </main>
+    );
   }
 
   return (

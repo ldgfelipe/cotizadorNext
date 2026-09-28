@@ -4,7 +4,11 @@ import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
+const sitioUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ?? "https://cotizador-next-eight.vercel.app";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(sitioUrl),
   title: {
     default: "Cotizador ISR Inmobiliario",
     template: "%s | Cotizador ISR Inmobiliario",
@@ -37,7 +41,7 @@ export const metadata: Metadata = {
     title: "Cotizador ISR Inmobiliario",
     description:
       "Calcula tu ISR por enajenación inmobiliaria con precisión.",
-    url: "https://cotizador-next-eight.vercel.app",
+    url: sitioUrl,
     images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "Cotizador ISR" }],
   },
   twitter: {

@@ -8,8 +8,14 @@ export const metadata: Metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ redirect?: string }>;
+  searchParams: Promise<{ redirect?: string; error?: string }>;
 }) {
-  const { redirect = '/dashboard' } = await searchParams;
-  return <LoginForm redirect={redirect} />;
+  const { redirect = '/dashboard', error } = await searchParams;
+
+  const mensajeError =
+    error === 'confirmacion'
+      ? 'No pudimos confirmar tu correo. El enlace venció o ya fue usado. Intenta iniciar sesión de nuevo.'
+      : null;
+
+  return <LoginForm redirect={redirect} errorInicial={mensajeError} />;
 }

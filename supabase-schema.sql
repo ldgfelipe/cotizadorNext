@@ -1,4 +1,4 @@
--- Esquema completo para Cotizador ISR
+-- Esquema completo para Cotizador ISR (idempotente)
 -- Ejecutar en Supabase SQL Editor
 
 -- 1. profiles (perfil de usuario extendido)
@@ -86,6 +86,48 @@ CREATE TABLE IF NOT EXISTS public.user_settings (
   UNIQUE(user_id, key)
 );
 
+-- ============================================================
+-- Migraciones para installations donde las tablas ya existen
+-- (CREATE TABLE IF NOT EXISTS no agrega columnas a tablas previas)
+-- ============================================================
+
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS email TEXT,
+  ADD COLUMN IF NOT EXISTS full_name TEXT,
+  ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user',
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE public.clients
+  ADD COLUMN IF NOT EXISTS nombre TEXT,
+  ADD COLUMN IF NOT EXISTS email TEXT,
+  ADD COLUMN IF NOT EXISTS telefono TEXT,
+  ADD COLUMN IF NOT EXISTS rfc TEXT,
+  ADD COLUMN IF NOT EXISTS direccion TEXT,
+  ADD COLUMN IF NOT EXISTS notas TEXT,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE public.quote_records
+  ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES public.clients(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS input_data JSONB,
+  ADD COLUMN IF NOT EXISTS result_data JSONB,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
+-- product_id: algunos despliegues antiguos usaban "product" en singular
+ALTER TABLE public.orders
+  ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES public.products(id),
+  ADD COLUMN IF NOT EXISTS quantity INT DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS total NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending';
+
+-- products.name debe ser único para que el seed sea idempotente
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_name_unique ON public.products(name);
+
+-- ============================================================
+-- Fin de migraciones
+-- ============================================================
+
 -- Habilitar RLS en todas las tablas
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.clients ENABLE ROW LEVEL SECURITY;
@@ -96,6 +138,38 @@ ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_settings ENABLE ROW LEVEL SECURITY;
 
+-- Eliminar políticas existentes (si existen) y recrear
+DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Admins can view all profiles" ON public.profiles;
+DROP POLICY IF EXISTS "Users can manage own clients" ON public.clients;
+DROP POLICY IF EXISTS "Users can view own purchases" ON public.credit_purchases;
+DROP POLICY IF EXISTS "Users can insert own purchases" ON public.credit_purchases;
+DROP POLICY IF EXISTS "Users can view own quotes" ON public.quote_records;
+DROP POLICY IF EXISTS "Users can insert own quotes" ON public.quote_records;
+DROP POLICY IF EXISTS "Anyone can view active products" ON public.products;
+DROP POLICY IF EXISTS "Users can view own orders" ON public.orders;
+DROP POLICY IF EXISTS "Users can manage own settings" ON public.user_settings;
+DROP POLICY IF EXISTS "Users can view all clients" ON public.clients;
+DROP POLICY IF EXISTS "Users can view all quotes" ON public.quote_records;
+
+-- Función segura para verificar rol admin sin recursión de RLS
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_admin() FROM public;
+GRANT EXECUTE ON FUNCTION public.is_admin() TO anon, authenticated;
+
 -- Políticas RLS para profiles
 CREATE POLICY "Users can view own profile" ON public.profiles
   FOR SELECT USING (auth.uid() = id);
@@ -104,13 +178,13 @@ CREATE POLICY "Users can update own profile" ON public.profiles
   FOR UPDATE USING (auth.uid() = id);
 
 CREATE POLICY "Admins can view all profiles" ON public.profiles
-  FOR SELECT USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
-  );
+  FOR SELECT USING (public.is_admin());
 
 -- Políticas RLS para clients
 CREATE POLICY "Users can manage own clients" ON public.clients
-  FOR ALL USING (auth.uid() = user_id);
+  FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- Políticas RLS para credit_purchases
 CREATE POLICY "Users can view own purchases" ON public.credit_purchases
@@ -140,16 +214,22 @@ CREATE POLICY "Users can manage own settings" ON public.user_settings
 
 -- Trigger para auto-crear perfil al registrarse
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, full_name, role, created_at)
+  INSERT INTO public.profiles (id, email, full_name, role, created_at, updated_at)
   VALUES (
     NEW.id,
-    NEW.email,
+    COALESCE(NEW.email, ''),
     NEW.raw_user_meta_data->>'full_name',
-    COALESCE(NEW.raw_user_meta_data->>'role', 'user'),
+    'user',
+    NOW(),
     NOW()
-  );
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET email = EXCLUDED.email,
+        full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
+        updated_at = NOW();
+
   RETURN NEW;
 END;
 $$;
@@ -159,12 +239,19 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- Insertar productos por defecto
+-- Limpiar seeds antiguos con acentos para no duplicar productos
+DELETE FROM public.products WHERE name IN ('Básico', 'Profesional', 'Enterprise');
+
+-- Insertar productos por defecto (idempotente gracias al índice único en name)
 INSERT INTO public.products (name, description, price, category, active) VALUES
-  ('Básico', '10 cotizaciones', 18.00, 'creditos', true),
-  ('Profesional', '20 cotizaciones', 35.00, 'creditos', true),
-  ('Enterprise', '50 cotizaciones', 80.00, 'creditos', true)
-ON CONFLICT DO NOTHING;
+  ('basico', '10 cotizaciones', 18.00, 'creditos', true),
+  ('profesional', '20 cotizaciones', 35.00, 'creditos', true),
+  ('enterprise', '50 cotizaciones', 80.00, 'creditos', true)
+ON CONFLICT (name) DO UPDATE
+  SET description = EXCLUDED.description,
+      price = EXCLUDED.price,
+      category = EXCLUDED.category,
+      active = EXCLUDED.active;
 
 -- Índices para performance
 CREATE INDEX IF NOT EXISTS idx_clients_user_id ON public.clients(user_id);

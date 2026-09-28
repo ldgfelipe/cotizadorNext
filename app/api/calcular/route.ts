@@ -81,16 +81,43 @@ export async function POST(request: Request) {
 
     // Guardar cotización en BD si hay usuario autenticado
     const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
     if (user) {
+      let clientId: string | null = null;
+      const solicitado = typeof body.client_id === 'string' ? body.client_id : '';
+
+      if (solicitado) {
+        const { data: cliente } = await supabase
+          .from('clients')
+          .select('id')
+          .eq('id', solicitado)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (cliente) clientId = cliente.id;
+      }
+
       const { error } = await supabase.from('quote_records').insert({
         user_id: user.id,
-        client_id: body.client_id || null,
-        input_data: body,
+        client_id: clientId,
+        input_data: {
+          fecha_venta: body.fecha_venta,
+          fecha_adquisicion: body.fecha_adquisicion,
+          valor_escritura: numeros.valor_escritura,
+          porcentaje_enajenante: numeros.porcentaje_enajenante,
+          valor_terreno: numeros.valor_terreno,
+          valor_constr: numeros.valor_constr,
+          exenta: Boolean(body.exenta),
+        },
         result_data: resultado,
       });
-      if (error) console.error('Error guardando cotización:', error);
+
+      if (error) {
+        console.error('Error guardando cotización:', error);
+      }
     }
 
     return NextResponse.json({ success: true, resultado });
