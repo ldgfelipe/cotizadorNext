@@ -30,7 +30,10 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const esRutaProtegida =
-    pathname.startsWith('/dashboard') || pathname.startsWith('/admin');
+    pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/quoter') ||
+    pathname.startsWith('/credits');
 
   const esRutaAuth = pathname === '/login' || pathname === '/register';
 
@@ -61,5 +64,12 @@ function redirigirConCookies(url: URL, response: NextResponse) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/admin/:path*', '/login', '/register'],
+  matcher: [
+    '/dashboard/:path*',
+    '/admin/:path*',
+    '/quoter/:path*',
+    '/credits/:path*',
+    '/login',
+    '/register',
+  ],
 };

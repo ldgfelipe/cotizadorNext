@@ -20,6 +20,18 @@ const CAMPOS_NUMERICOS = [
 
 export async function POST(request: Request) {
   try {
+    const supabase = await createServerSupabaseClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Debes iniciar sesión para usar el cotizador' },
+        { status: 401 }
+      );
+    }
+
     const body = await request.json();
 
     const faltantes = CAMPOS_REQUERIDOS.filter((campo) => {
@@ -79,45 +91,38 @@ export async function POST(request: Request) {
       inpcAdquisicion
     );
 
-    // Guardar cotización en BD si hay usuario autenticado
-    const supabase = await createServerSupabaseClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    // Guardar cotización en BD
+    let clientId: string | null = null;
+    const solicitado = typeof body.client_id === 'string' ? body.client_id : '';
 
-    if (user) {
-      let clientId: string | null = null;
-      const solicitado = typeof body.client_id === 'string' ? body.client_id : '';
+    if (solicitado) {
+      const { data: cliente } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('id', solicitado)
+        .eq('user_id', user.id)
+        .maybeSingle();
 
-      if (solicitado) {
-        const { data: cliente } = await supabase
-          .from('clients')
-          .select('id')
-          .eq('id', solicitado)
-          .eq('user_id', user.id)
-          .maybeSingle();
+      if (cliente) clientId = cliente.id;
+    }
 
-        if (cliente) clientId = cliente.id;
-      }
+    const { error } = await supabase.from('quote_records').insert({
+      user_id: user.id,
+      client_id: clientId,
+      input_data: {
+        fecha_venta: body.fecha_venta,
+        fecha_adquisicion: body.fecha_adquisicion,
+        valor_escritura: numeros.valor_escritura,
+        porcentaje_enajenante: numeros.porcentaje_enajenante,
+        valor_terreno: numeros.valor_terreno,
+        valor_constr: numeros.valor_constr,
+        exenta: Boolean(body.exenta),
+      },
+      result_data: resultado,
+    });
 
-      const { error } = await supabase.from('quote_records').insert({
-        user_id: user.id,
-        client_id: clientId,
-        input_data: {
-          fecha_venta: body.fecha_venta,
-          fecha_adquisicion: body.fecha_adquisicion,
-          valor_escritura: numeros.valor_escritura,
-          porcentaje_enajenante: numeros.porcentaje_enajenante,
-          valor_terreno: numeros.valor_terreno,
-          valor_constr: numeros.valor_constr,
-          exenta: Boolean(body.exenta),
-        },
-        result_data: resultado,
-      });
-
-      if (error) {
-        console.error('Error guardando cotización:', error);
-      }
+    if (error) {
+      console.error('Error guardando cotización:', error);
     }
 
     return NextResponse.json({ success: true, resultado });
