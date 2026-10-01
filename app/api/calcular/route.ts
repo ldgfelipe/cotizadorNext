@@ -32,6 +32,30 @@ export async function POST(request: Request) {
       );
     }
 
+    // --- Validación de créditos disponibles ---
+    const [compras, { count: cotizacionesCount }] = await Promise.all([
+      supabase
+        .from('credit_purchases')
+        .select('credits')
+        .eq('status', 'completed'),
+      supabase.from('quote_records').select('*', { count: 'exact', head: true }),
+    ]);
+
+    const creditosComprados = compras.data?.reduce((suma, c) => suma + c.credits, 0) ?? 0;
+    const creditosUsados = cotizacionesCount ?? 0;
+    const creditosDisponibles = creditosComprados - creditosUsados;
+
+    if (creditosDisponibles < 1) {
+      return NextResponse.json(
+        {
+          error: 'No tienes créditos suficientes. Canjea un cupón o compra créditos.',
+          codigo: 'SIN_CREDITOS',
+          disponibles: creditosDisponibles,
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
 
     const faltantes = CAMPOS_REQUERIDOS.filter((campo) => {
@@ -118,6 +142,7 @@ export async function POST(request: Request) {
         valor_constr: numeros.valor_constr,
         exenta: Boolean(body.exenta),
       },
+      // guardar también el desglose de movimientos para poder imprimirlo después
       result_data: resultado,
     });
 

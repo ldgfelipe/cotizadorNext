@@ -100,9 +100,12 @@ export default function DashboardClient({ email }: { email: string }) {
     })();
   }, []);
 
-  const totalCreditos = compras.reduce((suma, c) => suma + c.credits, 0);
+  const totalCreditos = compras
+    .filter((c) => c.status === 'completed')
+    .reduce((suma, c) => suma + c.credits, 0);
   const totalCotizaciones = cotizaciones.length;
   const totalClientes = clientes.length;
+  const creditosDisponibles = totalCreditos - totalCotizaciones;
 
   function reiniciarForm() {
     setFormNombre('');
@@ -236,8 +239,8 @@ export default function DashboardClient({ email }: { email: string }) {
             <p className="mt-1 text-sm opacity-70">Clientes</p>
           </div>
           <div className="rounded-lg border border-black/10 p-6 dark:border-white/15">
-            <div className="text-2xl font-medium text-green-600">{totalCreditos}</div>
-            <p className="mt-1 text-sm opacity-70">Créditos</p>
+            <div className="text-2xl font-medium text-green-600">{creditosDisponibles}</div>
+            <p className="mt-1 text-sm opacity-70">Créditos disponibles</p>
           </div>
           <div className="rounded-lg border border-black/10 p-6 dark:border-white/15">
             <div className="text-2xl font-medium text-purple-600">{totalCotizaciones}</div>

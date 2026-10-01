@@ -258,3 +258,114 @@ CREATE INDEX IF NOT EXISTS idx_clients_user_id ON public.clients(user_id);
 CREATE INDEX IF NOT EXISTS idx_quote_records_user_id ON public.quote_records(user_id);
 CREATE INDEX IF NOT EXISTS idx_quote_records_client_id ON public.quote_records(client_id);
 CREATE INDEX IF NOT EXISTS idx_credit_purchases_user_id ON public.credit_purchases(user_id);
+
+-- ============================================================
+-- Cupones de créditos
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.coupons (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT UNIQUE NOT NULL,
+  credits INT NOT NULL DEFAULT 1,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  max_uses INT NOT NULL DEFAULT 1,
+  used_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.coupons ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins can manage coupons" ON public.coupons;
+CREATE POLICY "Admins can manage coupons" ON public.coupons
+  FOR ALL USING (public.is_admin());
+
+-- ============================================================
+-- Ampliar tipos de paquete en credit_purchases (cupón / recarga admin)
+-- ============================================================
+DO $$
+BEGIN
+  ALTER TABLE public.credit_purchases DROP CONSTRAINT IF EXISTS credit_purchases_package_check;
+  ALTER TABLE public.credit_purchases ADD CONSTRAINT credit_purchases_package_check
+    CHECK (package IN ('basico','profesional','enterprise','cupon','admin_reload'));
+END $$;
+
+-- ============================================================
+-- Función: canjear cupón (SECURITY DEFINER para operar sobre
+-- credit_purchases y coupons sin que RLS bloquee)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.canjear_cupon(codigo TEXT)
+RETURNS INT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  cupon public.coupons%ROWTYPE;
+  usuario uuid := auth.uid();
+BEGIN
+  IF usuario IS NULL THEN
+    RAISE EXCEPTION 'Debes iniciar sesión';
+  END IF;
+
+  SELECT * INTO cupon FROM public.coupons
+  WHERE code = upper(btrim(codigo))
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'El cupón ingresado no existe';
+  END IF;
+
+  IF NOT cupon.active THEN
+    RAISE EXCEPTION 'El cupón está inactivo';
+  END IF;
+
+  IF cupon.used_count >= cupon.max_uses THEN
+    RAISE EXCEPTION 'El cupón ya fue canjeado el máximo de veces';
+  END IF;
+
+  INSERT INTO public.credit_purchases (user_id, package, credits, amount, status)
+  VALUES (usuario, 'cupon', cupon.credits, 0, 'completed');
+
+  UPDATE public.coupons SET used_count = used_count + 1 WHERE id = cupon.id;
+
+  RETURN cupon.credits;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.canjear_cupon(text) FROM public;
+GRANT EXECUTE ON FUNCTION public.canjear_cupon(text) TO authenticated;
+
+-- ============================================================
+-- Función: recarga administrativa de créditos
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.admin_recargar_creditos(
+  target_user UUID,
+  cantidad INTEGER,
+  motivo TEXT DEFAULT 'recarga administrativa'
+)
+RETURNS INT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT public.is_admin() THEN
+    RAISE EXCEPTION 'No autorizado: se requiere rol admin';
+  END IF;
+
+  IF cantidad <= 0 OR cantidad > 1000000 THEN
+    RAISE EXCEPTION 'Cantidad inválida de créditos';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.profiles WHERE id = target_user) THEN
+    RAISE EXCEPTION 'El usuario destino no existe';
+  END IF;
+
+  INSERT INTO public.credit_purchases (user_id, package, credits, amount, status)
+  VALUES (target_user, 'admin_reload', cantidad, 0, 'completed');
+
+  RETURN cantidad;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.admin_recargar_creditos(uuid, integer, text) FROM public;
+GRANT EXECUTE ON FUNCTION public.admin_recargar_creditos(uuid, integer, text) TO authenticated;

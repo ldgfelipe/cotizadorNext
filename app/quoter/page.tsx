@@ -5,12 +5,21 @@ import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 
+interface MovimientoISR {
+  paso: number;
+  titulo: string;
+  detalle: string;
+  monto: number | null;
+  categoria: 'referencia' | 'entrada' | 'ajuste' | 'resultado';
+}
+
 interface ResultadoISR {
   base_gravable: number;
   isr_a_pagar: number;
   udi_usada: number;
   factor_ajuste: number;
   inpc_ratio: number;
+  movimientos: MovimientoISR[];
 }
 
 interface Cliente {
@@ -63,7 +72,7 @@ const PASOS: Paso[] = [
     titulo: 'Cliente',
     basica: '¿A nombre de quién será la cotización?',
     completa:
-      'Puedes asociar la cotización a un cliente guardado en tu dashboard para llevar el historial por cliente. Si aún no tienes clientes registrados, deja "Sin cliente asociado" y continúa; la cotización igual quedará en tu historial.',
+      'Puedes asociar la cotización a un cliente existente o crear uno nuevo al vuelo. Los clientes quedan guardados y los verás en la sección "Mis clientes" de tu dashboard.',
     requerido: false,
   },
   {
@@ -149,6 +158,15 @@ const moneda = new Intl.NumberFormat('es-MX', {
   maximumFractionDigits: 2,
 });
 
+const numero = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 6 });
+
+const escapar = (valor: string) =>
+  valor
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
 export default function QuoterPage() {
   const router = useRouter();
 
@@ -160,12 +178,20 @@ export default function QuoterPage() {
   const [cargandoClientes, setCargandoClientes] = useState(true);
   const [paso, setPaso] = useState(0);
   const [detalleAbierto, setDetalleAbierto] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [modoCliente, setModoCliente] = useState<'seleccionar' | 'crear'>('seleccionar');
+  const [nuevoClienteNombre, setNuevoClienteNombre] = useState('');
+  const [nuevoClienteEmail, setNuevoClienteEmail] = useState('');
+  const [nuevoClienteTelefono, setNuevoClienteTelefono] = useState('');
+  const [creditosDisponibles, setCreditosDisponibles] = useState<number | null>(null);
+  const [sinCreditos, setSinCreditos] = useState(false);
 
   const pasoActual = PASOS[paso];
   const esUltimo = paso === PASOS.length - 1;
+  const clienteSeleccionado = clientes.find((c) => c.id === form.client_id);
 
   useEffect(() => {
-    async function cargarClientes() {
+    async function cargarDatosIniciales() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -175,17 +201,28 @@ export default function QuoterPage() {
         return;
       }
 
-      const { data, error: errorClientes } = await supabase
-        .from('clients')
-        .select('id, nombre, email, telefono, rfc')
-        .eq('user_id', user.id)
-        .order('nombre');
+      setUserId(user.id);
 
-      if (!errorClientes) setClientes(data || []);
+      const [clientesRes, comprasRes, cotizacionesRes] = await Promise.all([
+        supabase
+          .from('clients')
+          .select('id, nombre, email, telefono, rfc')
+          .eq('user_id', user.id)
+          .order('nombre'),
+        supabase.from('credit_purchases').select('credits').eq('status', 'completed'),
+        supabase.from('quote_records').select('id'),
+      ]);
+
+      setClientes(clientesRes.data ?? []);
       setCargandoClientes(false);
+
+      const comprados =
+        comprasRes.data?.reduce((suma, c) => suma + c.credits, 0) ?? 0;
+      const usados = cotizacionesRes.data?.length ?? 0;
+      setCreditosDisponibles(comprados - usados);
     }
 
-    cargarClientes();
+    cargarDatosIniciales();
   }, [router]);
 
   const actualizar = (campo: keyof Formulario, valor: string | boolean) => {
@@ -196,6 +233,7 @@ export default function QuoterPage() {
     setCargando(true);
     setError(null);
     setResultado(null);
+    setSinCreditos(false);
 
     try {
       const respuesta = await fetch('/api/calcular', {
@@ -207,6 +245,9 @@ export default function QuoterPage() {
       const payload = await respuesta.json();
 
       if (!respuesta.ok) {
+        if (payload.codigo === 'SIN_CREDITOS') {
+          setSinCreditos(true);
+        }
         setError(payload.error ?? 'No fue posible realizar el cálculo');
         return;
       }
@@ -225,16 +266,63 @@ export default function QuoterPage() {
     return typeof valor === 'string' && valor.trim() !== '';
   }
 
-  function siguiente() {
+  async function siguiente() {
     setError(null);
+
+    if (paso === 0 && modoCliente === 'crear') {
+      const nombre = nuevoClienteNombre.trim();
+      if (!nombre) {
+        setError('El nombre del cliente es obligatorio.');
+        return;
+      }
+      if (!userId) {
+        setError('Debes iniciar sesión.');
+        return;
+      }
+
+      setCargando(true);
+      const { data, error: errorCliente } = await supabase
+        .from('clients')
+        .insert({
+          user_id: userId,
+          nombre,
+          email: nuevoClienteEmail.trim() || null,
+          telefono: nuevoClienteTelefono.trim() || null,
+        })
+        .select('id, nombre, email, telefono, rfc')
+        .single();
+      setCargando(false);
+
+      if (errorCliente || !data) {
+        setError(errorCliente?.message ?? 'No fue posible crear el cliente');
+        return;
+      }
+
+      setClientes((previo) => [data, ...previo]);
+      actualizar('client_id', data.id);
+      setModoCliente('seleccionar');
+      setNuevoClienteNombre('');
+      setNuevoClienteEmail('');
+      setNuevoClienteTelefono('');
+      setPaso(1);
+      setDetalleAbierto(false);
+      return;
+    }
+
     if (!validarPasoActual()) {
       setError('Este campo es obligatorio para continuar.');
       return;
     }
+
     if (esUltimo) {
+      if (creditosDisponibles !== null && creditosDisponibles < 1) {
+        setSinCreditos(true);
+        return;
+      }
       enviar();
       return;
     }
+
     setPaso((p) => p + 1);
     setDetalleAbierto(false);
   }
@@ -249,8 +337,97 @@ export default function QuoterPage() {
     setForm(ESTADO_INICIAL);
     setResultado(null);
     setError(null);
+    setSinCreditos(false);
     setPaso(0);
     setDetalleAbierto(false);
+  }
+
+  function imprimir() {
+    window.print();
+  }
+
+  function generarHtmlCotizacion(): string {
+    const linea = (etiqueta: string, valor: string) =>
+      `<div class="campo"><span class="etiqueta">${etiqueta}</span><span class="valor">${valor}</span></div>`;
+
+    const movimientosHtml = (resultado?.movimientos ?? [])
+      .map(
+        (m) => `<tr>
+          <td class="paso">${m.paso}</td>
+          <td><strong>${escapar(m.titulo)}</strong></td>
+          <td class="detalle">${escapar(m.detalle)}</td>
+          <td class="monto">${m.monto === null ? '—' : escapeMonto(m.monto)}</td>
+        </tr>`
+      )
+      .join('');
+
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Cotización ISR</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 24px; line-height: 1.4; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitulo { color: #555; font-size: 13px; margin-bottom: 12px; }
+  h2 { font-size: 15px; margin: 20px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  .campo { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px dotted #eee; font-size: 13px; }
+  .etiqueta { color: #555; }
+  .valor { font-weight: 600; text-align: right; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f2f6ff; }
+  td.monto, td.paso { text-align: right; white-space: nowrap; }
+  .total { background: #eaf3ff; font-weight: 700; }
+  .footer { margin-top: 24px; font-size: 11px; color: #777; }
+</style>
+</head>
+<body>
+  <h1>Cotización ISR por enajenación de inmueble</h1>
+  <div class="subtitulo">Generada el ${new Date().toLocaleString('es-MX')}</div>
+
+  <div class="campo"><span class="etiqueta">Cliente</span><span class="valor">${escapar(clienteSeleccionado?.nombre ?? 'Sin cliente asociado')}</span></div>
+
+  <h2>Datos de la operación</h2>
+  ${linea('Fecha de venta', form.fecha_venta)}
+  ${linea('Fecha de adquisición', form.fecha_adquisicion)}
+  ${linea('Valor de escrituración', moneda.format(Number(form.valor_escritura) || 0))}
+  ${linea('Porcentaje de enajenante', `${form.porcentaje_enajenante}%`)}
+  ${linea('Valor del terreno', moneda.format(Number(form.valor_terreno) || 0))}
+  ${linea('Valor de construcción', moneda.format(Number(form.valor_constr) || 0))}
+  ${linea('Operación exenta', form.exenta ? 'Sí' : 'No')}
+
+  <h2>Movimientos del cálculo</h2>
+  <table>
+    <thead><tr><th>Paso</th><th>Concepto</th><th>Detalle</th><th>Valor</th></tr></thead>
+    <tbody>${movimientosHtml}</tbody>
+  </table>
+
+  <h2>Resultado</h2>
+  ${linea('Base gravable', moneda.format(resultado?.base_gravable ?? 0))}
+  ${linea('ISR a pagar', moneda.format(resultado?.isr_a_pagar ?? 0))}
+  ${linea('UDI utilizada', String(resultado?.udi_usada ?? 0))}
+  ${linea('Factor de ajuste', String(resultado?.factor_ajuste ?? 0))}
+  ${linea('Ratio INPC', String(resultado?.inpc_ratio ?? 0))}
+
+  <div class="footer">Este documento es una estimación generada por el sistema y no constituye asesoría fiscal.</div>
+</body>
+</html>`;
+  }
+
+  function escapeMonto(monto: number): string {
+    return numero.format(monto);
+  }
+
+  function descargarCotizacion() {
+    const html = generarHtmlCotizacion();
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const enlace = document.createElement('a');
+    enlace.href = url;
+    enlace.download = `cotizacion-${form.fecha_venta || 'sin-fecha'}.html`;
+    enlace.click();
+    URL.revokeObjectURL(url);
   }
 
   const progreso = ((paso + 1) / PASOS.length) * 100;
@@ -258,61 +435,140 @@ export default function QuoterPage() {
   return (
     <main className="min-h-screen p-6 md:p-10">
       <div className="mx-auto max-w-2xl">
-        <Link href="/" className="text-sm text-blue-600 hover:text-blue-800">
+        <Link href="/" className="text-sm text-blue-600 hover:text-blue-800 no-print">
           &larr; Volver al inicio
         </Link>
 
-        <h1 className="mt-4 text-3xl font-bold">Cotizador ISR por enajenación</h1>
-        <p className="mt-2 text-sm opacity-70">
-          Responde un dato por paso. Los valores de UDI e INPC son de referencia.
-        </p>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold">Cotizador ISR por enajenación</h1>
+            <p className="mt-1 text-sm opacity-70">
+              Responde un dato por paso. Los valores de UDI e INPC son de referencia.
+            </p>
+          </div>
+          <div
+            className={
+              'rounded-full border px-3 py-1 text-sm font-semibold ' +
+              (creditosDisponibles !== null && creditosDisponibles < 1
+                ? 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400'
+                : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400')
+            }
+          >
+            {creditosDisponibles === null
+              ? 'Créditos: ...'
+              : `Créditos disponibles: ${creditosDisponibles}`}
+          </div>
+        </div>
 
         {resultado ? (
-          <section className="mt-8 rounded-lg border border-black/10 p-6 dark:border-white/15">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-semibold">Resultado de la cotización</h2>
-                <p className="mt-1 text-sm opacity-70">
-                  Guardada en tu historial del dashboard.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={nuevaCotizacion}
-                className="rounded border border-black/15 px-4 py-2 text-sm font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5"
-              >
-                Nueva cotización
-              </button>
+          <section
+            id="area-imprimible"
+            className="mt-8 rounded-lg border border-black/10 p-6 print-area dark:border-white/15"
+          >
+            <div>
+              <h2 className="text-xl font-semibold">Resultado de la cotización</h2>
+              <p className="mt-1 text-sm opacity-70">
+                Cliente: {clienteSeleccionado?.nombre ?? 'Sin cliente asociado'} ·{' '}
+                {new Date().toLocaleString('es-MX')}
+              </p>
             </div>
 
-            <dl className="mt-6 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg bg-black/5 p-4 dark:bg-white/5">
-                <dt className="text-sm opacity-70">Base gravable</dt>
-                <dd className="text-lg font-medium">{moneda.format(resultado.base_gravable)}</dd>
+            <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide opacity-70">
+              Datos de la operación
+            </h3>
+            <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Fecha de venta</dt>
+                <dd className="font-semibold">{form.fecha_venta}</dd>
               </div>
-              <div className="rounded-lg bg-blue-600/10 p-4">
-                <dt className="text-sm text-blue-700 opacity-80 dark:text-blue-300">ISR a pagar</dt>
-                <dd className="text-lg font-medium text-blue-600">
-                  {moneda.format(resultado.isr_a_pagar)}
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Fecha de adquisición</dt>
+                <dd className="font-semibold">{form.fecha_adquisicion}</dd>
+              </div>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Valor de escrituración</dt>
+                <dd className="font-semibold">
+                  {moneda.format(Number(form.valor_escritura) || 0)}
                 </dd>
               </div>
-              <div>
-                <dt className="text-sm opacity-70">UDI utilizada</dt>
-                <dd className="font-medium">{resultado.udi_usada.toFixed(4)}</dd>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Porcentaje de enajenante</dt>
+                <dd className="font-semibold">{form.porcentaje_enajenante}%</dd>
               </div>
-              <div>
-                <dt className="text-sm opacity-70">Factor de ajuste</dt>
-                <dd className="font-medium">{resultado.factor_ajuste.toFixed(6)}</dd>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Valor del terreno</dt>
+                <dd className="font-semibold">
+                  {moneda.format(Number(form.valor_terreno) || 0)}
+                </dd>
               </div>
-              <div>
-                <dt className="text-sm opacity-70">Ratio INPC</dt>
-                <dd className="font-medium">{resultado.inpc_ratio.toFixed(6)}</dd>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Valor de construcción</dt>
+                <dd className="font-semibold">
+                  {moneda.format(Number(form.valor_constr) || 0)}
+                </dd>
+              </div>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10 sm:col-span-2">
+                <dt className="opacity-70">Operación exenta</dt>
+                <dd className="font-semibold">{form.exenta ? 'Sí' : 'No'}</dd>
               </div>
             </dl>
+
+            <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide opacity-70">
+              Movimientos del cálculo
+            </h3>
+            <div className="mt-2 overflow-x-auto rounded-lg border border-black/10 dark:border-white/15">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-black/10 dark:border-white/15">
+                    <th className="p-2 text-left">Paso</th>
+                    <th className="p-2 text-left">Concepto</th>
+                    <th className="p-2 text-left">Detalle</th>
+                    <th className="p-2 text-right">Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(resultado.movimientos ?? []).map((m, i) => (
+                    <tr key={i} className="border-b border-black/5 dark:border-white/10">
+                      <td className="p-2 text-right">{m.paso}</td>
+                      <td className="p-2 font-medium">{m.titulo}</td>
+                      <td className="p-2 opacity-80">{m.detalle}</td>
+                      <td className="p-2 text-right font-semibold">
+                        {m.monto === null ? '—' : numero.format(m.monto)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg bg-black/5 p-4 dark:bg-white/5">
+                <p className="text-sm opacity-70">Base gravable</p>
+                <p className="text-lg font-medium">{moneda.format(resultado.base_gravable)}</p>
+              </div>
+              <div className="rounded-lg bg-blue-600/10 p-4">
+                <p className="text-sm text-blue-700 opacity-80 dark:text-blue-300">ISR a pagar</p>
+                <p className="text-lg font-medium text-blue-600">
+                  {moneda.format(resultado.isr_a_pagar)}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm opacity-70">UDI utilizada</p>
+                <p className="font-medium">{resultado.udi_usada.toFixed(4)}</p>
+              </div>
+              <div>
+                <p className="text-sm opacity-70">Factor de ajuste</p>
+                <p className="font-medium">{resultado.factor_ajuste.toFixed(6)}</p>
+              </div>
+              <div>
+                <p className="text-sm opacity-70">Ratio INPC</p>
+                <p className="font-medium">{resultado.inpc_ratio.toFixed(6)}</p>
+              </div>
+            </div>
           </section>
         ) : (
           <>
-            <div className="mt-8">
+            <div className="no-print mt-8">
               <div className="flex items-center justify-between text-sm opacity-70">
                 <span>
                   Paso {paso + 1} de {PASOS.length}
@@ -356,7 +612,7 @@ export default function QuoterPage() {
 
             <section
               key={pasoActual.campo}
-              className="mt-6 rounded-lg border border-black/10 p-6 dark:border-white/15"
+              className="mt-6 rounded-lg border border-black/10 p-6 no-print dark:border-white/15"
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -389,25 +645,89 @@ export default function QuoterPage() {
               )}
 
               <div className="mt-6">
-                {pasoActual.tipo === 'select' && (
-                  <select
-                    value={form.client_id}
-                    onChange={(e) => actualizar('client_id', e.target.value)}
-                    className="w-full rounded border border-black/15 px-3 py-2.5 dark:border-white/20 dark:bg-transparent"
-                  >
-                    {cargandoClientes ? (
-                      <option>Cargando clientes...</option>
+                {pasoActual.campo === 'client_id' && (
+                  <div className="space-y-4">
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setModoCliente('seleccionar')}
+                        className={
+                          'rounded px-3 py-1.5 text-sm font-medium transition-colors ' +
+                          (modoCliente === 'seleccionar'
+                            ? 'bg-blue-600 text-white'
+                            : 'border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5')
+                        }
+                      >
+                        Seleccionar cliente
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setModoCliente('crear')}
+                        className={
+                          'rounded px-3 py-1.5 text-sm font-medium transition-colors ' +
+                          (modoCliente === 'crear'
+                            ? 'bg-blue-600 text-white'
+                            : 'border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5')
+                        }
+                      >
+                        Crear cliente
+                      </button>
+                    </div>
+
+                    {modoCliente === 'seleccionar' ? (
+                      <select
+                        value={form.client_id}
+                        onChange={(e) => actualizar('client_id', e.target.value)}
+                        className="w-full rounded border border-black/15 px-3 py-2.5 dark:border-white/20 dark:bg-transparent"
+                      >
+                        {cargandoClientes ? (
+                          <option>Cargando clientes...</option>
+                        ) : (
+                          <>
+                            <option value="">Sin cliente asociado</option>
+                            {clientes.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.nombre} {c.email ? `(${c.email})` : ''}
+                              </option>
+                            ))}
+                          </>
+                        )}
+                      </select>
                     ) : (
-                      <>
-                        <option value="">Sin cliente asociado</option>
-                        {clientes.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.nombre} {c.email ? `(${c.email})` : ''}
-                          </option>
-                        ))}
-                      </>
+                      <div className="grid gap-3">
+                        <label className="flex flex-col gap-1 text-sm">
+                          <span className="font-medium">Nombre *</span>
+                          <input
+                            type="text"
+                            value={nuevoClienteNombre}
+                            onChange={(e) => setNuevoClienteNombre(e.target.value)}
+                            placeholder="Nombre del cliente"
+                            className="rounded border border-black/15 px-3 py-2.5 dark:border-white/20 dark:bg-transparent"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-sm">
+                          <span className="font-medium">Correo</span>
+                          <input
+                            type="email"
+                            value={nuevoClienteEmail}
+                            onChange={(e) => setNuevoClienteEmail(e.target.value)}
+                            placeholder="cliente@ejemplo.com"
+                            className="rounded border border-black/15 px-3 py-2.5 dark:border-white/20 dark:bg-transparent"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-sm">
+                          <span className="font-medium">Teléfono</span>
+                          <input
+                            type="tel"
+                            value={nuevoClienteTelefono}
+                            onChange={(e) => setNuevoClienteTelefono(e.target.value)}
+                            placeholder="555 000 0000"
+                            className="rounded border border-black/15 px-3 py-2.5 dark:border-white/20 dark:bg-transparent"
+                          />
+                        </label>
+                      </div>
                     )}
-                  </select>
+                  </div>
                 )}
 
                 {pasoActual.tipo === 'date' && (
@@ -448,13 +768,31 @@ export default function QuoterPage() {
               </div>
             </section>
 
-            {error && (
-              <p className="mt-4 rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+            {sinCreditos && (
+              <div className="mt-4 no-print rounded-lg border border-amber-500/40 bg-amber-500/10 p-5 dark:border-amber-400/40 dark:bg-amber-400/10">
+                <h3 className="font-semibold text-amber-700 dark:text-amber-300">
+                  No tienes créditos disponibles
+                </h3>
+                <p className="mt-1 text-sm opacity-80">
+                  Necesitas al menos 1 crédito para crear una cotización. Compra un paquete
+                  o canjea un cupón en la sección de créditos.
+                </p>
+                <Link
+                  href="/credits"
+                  className="mt-4 inline-block rounded bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700"
+                >
+                  Ir a créditos
+                </Link>
+              </div>
+            )}
+
+            {error && !sinCreditos && (
+              <p className="mt-4 rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 no-print dark:text-red-400">
                 {error}
               </p>
             )}
 
-            <div className="mt-6 flex justify-between">
+            <div className="no-print mt-6 flex justify-between">
               <button
                 type="button"
                 onClick={atras}
@@ -470,13 +808,39 @@ export default function QuoterPage() {
                 className="rounded bg-blue-600 px-6 py-2 font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
               >
                 {cargando
-                  ? 'Calculando...'
+                  ? 'Procesando...'
                   : esUltimo
                     ? 'Calcular ISR'
                     : 'Siguiente'}
               </button>
             </div>
           </>
+        )}
+
+        {resultado && (
+          <div className="no-print mt-6 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={imprimir}
+              className="rounded bg-blue-600 px-5 py-2 font-medium text-white transition-colors hover:bg-blue-700"
+            >
+              Imprimir / Guardar PDF
+            </button>
+            <button
+              type="button"
+              onClick={descargarCotizacion}
+              className="rounded border border-black/15 px-5 py-2 font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5"
+            >
+              Descargar cotización
+            </button>
+            <button
+              type="button"
+              onClick={nuevaCotizacion}
+              className="rounded border border-black/15 px-5 py-2 font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5"
+            >
+              Nueva cotización
+            </button>
+          </div>
         )}
       </div>
     </main>

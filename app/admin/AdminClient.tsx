@@ -41,6 +41,9 @@ export default function AdminClient({ userId }: { userId: string }) {
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [quotes, setQuotes] = useState<QuoteRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [mensaje, setMensaje] = useState<string | null>(null);
+  const [recargando, setRecargando] = useState<string | null>(null);
+  const [refresco, setRefresco] = useState(0);
 
   useEffect(() => {
     async function fetchData() {
@@ -75,7 +78,37 @@ export default function AdminClient({ userId }: { userId: string }) {
     }
 
     fetchData();
-  }, [userId]);
+  }, [userId, refresco]);
+
+  async function recargarCreditos(usuarioId: string, email: string) {
+    const entrada = window.prompt(`Créditos a recargar para ${email}:`);
+    if (entrada === null) return;
+
+    const cantidad = parseInt(entrada, 10);
+    if (Number.isNaN(cantidad) || cantidad <= 0) {
+      setError('Ingresa una cantidad válida de créditos.');
+      return;
+    }
+
+    setRecargando(usuarioId);
+    setError(null);
+    setMensaje(null);
+
+    const { data, error: errorRpc } = await supabase.rpc('admin_recargar_creditos', {
+      target_user: usuarioId,
+      cantidad,
+      motivo: 'recarga desde panel admin',
+    });
+
+    if (errorRpc) {
+      setError(errorRpc.message);
+    } else {
+      setMensaje(`Recarga exitosa: ${data} crédito(s) agregados a ${email}.`);
+      setRefresco((r) => r + 1);
+    }
+
+    setRecargando(null);
+  }
 
   if (autorizado === null) {
     return (
@@ -109,11 +142,17 @@ export default function AdminClient({ userId }: { userId: string }) {
     <main className="min-h-screen p-6 md:p-10">
       <div className="mx-auto max-w-6xl">
         <h1 className="text-3xl font-bold">Panel de administración</h1>
-        <p className="mt-2 opacity-70">Gestión de usuarios, compras y cotizaciones.</p>
+        <p className="mt-2 opacity-70">Gestión de usuarios, compras, cotizaciones y créditos.</p>
 
         {error && (
           <p className="mt-6 rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-400">
             {error}
+          </p>
+        )}
+
+        {mensaje && (
+          <p className="mt-6 rounded border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm text-green-700 dark:text-green-400">
+            {mensaje}
           </p>
         )}
 
@@ -128,6 +167,7 @@ export default function AdminClient({ userId }: { userId: string }) {
                     <th className="p-2 text-left">Nombre</th>
                     <th className="p-2 text-left">Rol</th>
                     <th className="p-2 text-left">Creado</th>
+                    <th className="p-2 text-right">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -137,6 +177,16 @@ export default function AdminClient({ userId }: { userId: string }) {
                       <td className="p-2">{u.full_name ?? '-'}</td>
                       <td className="p-2">{u.role ?? 'user'}</td>
                       <td className="p-2">{fecha(u.created_at)}</td>
+                      <td className="p-2 text-right">
+                        <button
+                          type="button"
+                          disabled={recargando !== null}
+                          onClick={() => recargarCreditos(u.id, u.email)}
+                          className="rounded border border-green-600/40 px-2 py-1 font-medium text-green-700 transition-colors hover:bg-green-500/10 disabled:opacity-50 dark:text-green-400"
+                        >
+                          {recargando === u.id ? '...' : 'Recargar créditos'}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

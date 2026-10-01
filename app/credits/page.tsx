@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
 
 type Paquetes = Record<string, number>;
 
@@ -27,13 +28,36 @@ export default function CreditsPage() {
   const [error, setError] = useState<string | null>(null);
   const [procesando, setProcesando] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [codigoCupon, setCodigoCupon] = useState('');
+  const [canjeando, setCanjeando] = useState(false);
+  const [creditosDisponibles, setCreditosDisponibles] = useState<number | null>(null);
+
+  async function cargarSaldo() {
+    const [{ data: compras }, { data: cotizaciones }] = await Promise.all([
+      supabase.from('credit_purchases').select('credits').eq('status', 'completed'),
+      supabase.from('quote_records').select('id'),
+    ]);
+
+    const comprados = compras?.reduce((suma, c) => suma + c.credits, 0) ?? 0;
+    const usados = cotizaciones?.length ?? 0;
+    setCreditosDisponibles(comprados - usados);
+  }
 
   useEffect(() => {
     async function cargar() {
       try {
-        const respuesta = await fetch('/api/paypal');
-        if (!respuesta.ok) throw new Error('sin respuesta');
-        setPaquetes(await respuesta.json());
+        const [paquetesRes, comprasRes, cotizacionesRes] = await Promise.all([
+          fetch('/api/paypal'),
+          supabase.from('credit_purchases').select('credits').eq('status', 'completed'),
+          supabase.from('quote_records').select('id'),
+        ]);
+
+        if (!paquetesRes.ok) throw new Error('sin respuesta');
+        setPaquetes(await paquetesRes.json());
+
+        const comprados = comprasRes.data?.reduce((suma, c) => suma + c.credits, 0) ?? 0;
+        const usados = cotizacionesRes.data?.length ?? 0;
+        setCreditosDisponibles(comprados - usados);
       } catch {
         setError('No fue posible cargar los paquetes de créditos');
       }
@@ -61,12 +85,41 @@ export default function CreditsPage() {
         return;
       }
 
-      setMensaje(`Pago simulado exitoso. Orden: ${payload.ordenId}. Créditos agregados: ${payload.creditosAgregados}`);
+      setMensaje(
+        `Pago simulado exitoso. Orden: ${payload.ordenId}. Créditos agregados: ${payload.creditosAgregados}`
+      );
+      await cargarSaldo();
     } catch {
       setError('Error de conexión al procesar el pago');
     } finally {
       setProcesando(null);
     }
+  }
+
+  async function canjearCupon() {
+    const codigo = codigoCupon.trim();
+    if (!codigo) {
+      setError('Escribe el código del cupón.');
+      return;
+    }
+
+    setCanjeando(true);
+    setError(null);
+    setMensaje(null);
+
+    const { data, error: errorRpc } = await supabase.rpc('canjear_cupon', {
+      codigo,
+    });
+
+    if (errorRpc) {
+      setError(errorRpc.message);
+    } else {
+      setMensaje(`Cupón canjeado: ${data} crédito(s) agregados a tu cuenta.`);
+      setCodigoCupon('');
+      await cargarSaldo();
+    }
+
+    setCanjeando(false);
   }
 
   return (
@@ -76,11 +129,27 @@ export default function CreditsPage() {
           &larr; Volver al inicio
         </Link>
 
-        <h1 className="mt-4 text-3xl font-bold">Créditos</h1>
-        <p className="mt-2 text-sm opacity-70">
-          Compra cotizaciones con PayPal. El pago está en modo simulación hasta conectar
-          las credenciales y el webhook de PayPal.
-        </p>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold">Créditos</h1>
+            <p className="mt-2 text-sm opacity-70">
+              Compra cotizaciones o canjea un cupón. El pago está en modo simulación hasta
+              conectar las credenciales de PayPal.
+            </p>
+          </div>
+          <div
+            className={
+              'rounded-full border px-3 py-1 text-sm font-semibold ' +
+              (creditosDisponibles !== null && creditosDisponibles < 1
+                ? 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400'
+                : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400')
+            }
+          >
+            {creditosDisponibles === null
+              ? 'Créditos: ...'
+              : `Créditos disponibles: ${creditosDisponibles}`}
+          </div>
+        </div>
 
         {error && (
           <p className="mt-6 rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-400">
@@ -93,6 +162,30 @@ export default function CreditsPage() {
             {mensaje}
           </p>
         )}
+
+        <section className="mt-8 rounded-lg border border-black/10 p-6 dark:border-white/15">
+          <h2 className="text-lg font-semibold">Canjear cupón</h2>
+          <p className="mt-1 text-sm opacity-70">
+            Si tienes un código de cupón, ingrésalo para sumar créditos a tu cuenta.
+          </p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+            <input
+              type="text"
+              value={codigoCupon}
+              onChange={(e) => setCodigoCupon(e.target.value)}
+              placeholder="Código del cupón"
+              className="w-full rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
+            />
+            <button
+              type="button"
+              onClick={canjearCupon}
+              disabled={canjeando}
+              className="rounded bg-green-600 px-5 py-2 font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-60"
+            >
+              {canjeando ? 'Canjeando...' : 'Canjear'}
+            </button>
+          </div>
+        </section>
 
         <div className="mt-8 grid gap-4 sm:grid-cols-3">
           {paquetes
