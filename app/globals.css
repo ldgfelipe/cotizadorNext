@@ -23,3 +23,118 @@ body {
   color: var(--foreground);
   font-family: var(--font-inter), Arial, Helvetica, sans-serif;
 }
+
+/* ===================== Mapa animado (landing) ===================== */
+.mapa {
+  background:
+    radial-gradient(1200px 600px at 20% 10%, rgba(37, 99, 235, 0.25), transparent 60%),
+    radial-gradient(900px 500px at 85% 90%, rgba(168, 85, 247, 0.2), transparent 60%),
+    radial-gradient(700px 400px at 60% 50%, rgba(16, 185, 129, 0.15), transparent 60%),
+    #0b1120;
+}
+
+.mapa-rejilla {
+  background-image:
+    repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.14) 0 1px, transparent 1px 44px),
+    repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.14) 0 1px, transparent 1px 44px);
+  mask-image: radial-gradient(circle at center, black 40%, transparent 85%);
+  animation: mapa-viajar 26s linear infinite;
+}
+
+@keyframes mapa-viajar {
+  to {
+    background-position:
+      0 44px,
+      44px 0;
+  }
+}
+
+.mapa-rutas path {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.mapa-rutas--1 path {
+  stroke: #38bdf8;
+  stroke-opacity: 0.7;
+  stroke-width: 2;
+  stroke-dasharray: 9 15;
+  animation: mapa-circ 1.6s linear infinite;
+}
+
+.mapa-rutas--2 path {
+  stroke: #a855f7;
+  stroke-opacity: 0.55;
+  stroke-width: 2.5;
+  stroke-dasharray: 6 12;
+  animation: mapa-circ 1.15s linear infinite reverse;
+}
+
+.mapa-rutas--3 path {
+  stroke: #34d399;
+  stroke-opacity: 0.5;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 10;
+  animation: mapa-circ 1.9s linear infinite;
+}
+
+@keyframes mapa-circ {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.mapa-punto::before,
+.mapa-punto::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+}
+
+.mapa-punto::before {
+  background: #38bdf8;
+  box-shadow: 0 0 12px 3px rgba(56, 189, 248, 0.8);
+  animation: mapa-eco 2.4s ease-out infinite;
+}
+
+.mapa-punto::after {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+@keyframes mapa-eco {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(3.4);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(3.4);
+    opacity: 0;
+  }
+}
+
+.mapa-aurora {
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.4) 0%, transparent 65%);
+  filter: blur(10px);
+  animation: mapa-aurora 9s ease-in-out infinite alternate;
+}
+
+@keyframes mapa-aurora {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(48px, -32px, 0) scale(1.3);
+  }
+}
+
+.mapa-sat {
+  background-image:
+    radial-gradient(180px 90px at 30% 70%, rgba(15, 118, 110, 0.35), transparent 70%),
+    radial-gradient(140px 70px at 70% 30%, rgba(30, 64, 175, 0.4), transparent 70%),
+    radial-gradient(160px 80px at 55% 85%, rgba(21, 128, 61, 0.3), transparent 70%);
+}

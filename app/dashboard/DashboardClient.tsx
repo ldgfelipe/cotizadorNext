@@ -1,8 +1,8 @@
 'use client';
 
+import { useState, useEffect, useCallback, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '@/lib/supabase';
 
 interface Cliente {
@@ -37,58 +37,11 @@ interface Compra {
   created_at: string;
 }
 
-const CAMPOS_VACIOS = {
-  nombre: '',
-  email: '',
-  telefono: '',
-  rfc: '',
-  direccion: '',
-  notas: '',
-};
-
 const moneda = new Intl.NumberFormat('es-MX', {
   style: 'currency',
   currency: 'MXN',
   maximumFractionDigits: 2,
 });
-
-const fecha = (valor: string) =>
-  new Date(valor).toLocaleDateString('es-MX', { dateStyle: 'medium' });
-
-interface DatosDashboard {
-  clientes: Cliente[];
-  cotizaciones: Cotizacion[];
-  compras: Compra[];
-  error: string | null;
-}
-
-async function obtenerDatos(): Promise<DatosDashboard> {
-  const [clientesRes, cotizacionesRes, comprasRes] = await Promise.all([
-    supabase
-      .from('clients')
-      .select('*')
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('quote_records')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50),
-    supabase
-      .from('credit_purchases')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50),
-  ]);
-
-  const fallo = clientesRes.error ?? cotizacionesRes.error ?? comprasRes.error;
-
-  return {
-    clientes: clientesRes.data ?? [],
-    cotizaciones: cotizacionesRes.data ?? [],
-    compras: comprasRes.data ?? [],
-    error: fallo ? fallo.message : null,
-  };
-}
 
 export default function DashboardClient({ email }: { email: string }) {
   const router = useRouter();
@@ -98,71 +51,86 @@ export default function DashboardClient({ email }: { email: string }) {
   const [compras, setCompras] = useState<Compra[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [exito, setExito] = useState<string | null>(null);
+  const [mensaje, setMensaje] = useState<string | null>(null);
 
-  const [form, setForm] = useState(CAMPOS_VACIOS);
+  const [formNombre, setFormNombre] = useState('');
+  const [formEmail, setFormEmail] = useState('');
+  const [formTelefono, setFormTelefono] = useState('');
+  const [formRfc, setFormRfc] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
-  const [guardando, setGuardando] = useState(false);
+  const [guardandoCliente, setGuardandoCliente] = useState(false);
 
-  const aplicarDatos = useCallback((datos: DatosDashboard) => {
-    setClientes(datos.clientes);
-    setCotizaciones(datos.cotizaciones);
-    setCompras(datos.compras);
-    if (datos.error) setError(datos.error);
+  const [nombrePerfil, setNombrePerfil] = useState('');
+  const [guardandoPerfil, setGuardandoPerfil] = useState(false);
+
+  const cargarDatos = useCallback(async () => {
+    const [cRes, coRes, cpRes] = await Promise.all([
+      supabase.from('clients').select('*').order('created_at', { ascending: false }),
+      supabase
+        .from('quote_records')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50),
+      supabase
+        .from('credit_purchases')
+        .select('*')
+        .order('created_at', { ascending: false }),
+    ]);
+
+    setClientes(cRes.data ?? []);
+    setCotizaciones(coRes.data ?? []);
+    setCompras(cpRes.data ?? []);
+
+    const primerError = coRes.error ?? cpRes.error ?? cRes.error;
+    if (primerError) setError(primerError.message);
+
     setCargando(false);
   }, []);
 
-  const cargarDatos = useCallback(async () => {
-    aplicarDatos(await obtenerDatos());
-  }, [aplicarDatos]);
+  useEffect(() => {
+    // Carga inicial de datos del dashboard.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarDatos();
+  }, [cargarDatos]);
 
   useEffect(() => {
-    let activo = true;
+    (async () => {
+      const { data: perfil } = await supabase.from('profiles').select('full_name').maybeSingle();
+      if (perfil?.full_name) setNombrePerfil(perfil.full_name);
+    })();
+  }, []);
 
-    obtenerDatos().then((datos) => {
-      if (!activo) return;
-      aplicarDatos(datos);
-    });
+  const totalCreditos = compras.reduce((suma, c) => suma + c.credits, 0);
+  const totalCotizaciones = cotizaciones.length;
+  const totalClientes = clientes.length;
 
-    return () => {
-      activo = false;
-    };
-  }, [aplicarDatos]);
-
-  function actualizar(campo: keyof typeof CAMPOS_VACIOS, valor: string) {
-    setForm((previo) => ({ ...previo, [campo]: valor }));
-  }
-
-  function reiniciarFormulario() {
-    setForm(CAMPOS_VACIOS);
+  function reiniciarForm() {
+    setFormNombre('');
+    setFormEmail('');
+    setFormTelefono('');
+    setFormRfc('');
     setEditandoId(null);
   }
 
-  function editar(cliente: Cliente) {
+  function empezarEditar(cliente: Cliente) {
     setEditandoId(cliente.id);
-    setForm({
-      nombre: cliente.nombre,
-      email: cliente.email ?? '',
-      telefono: cliente.telefono ?? '',
-      rfc: cliente.rfc ?? '',
-      direccion: cliente.direccion ?? '',
-      notas: cliente.notas ?? '',
-    });
+    setFormNombre(cliente.nombre);
+    setFormEmail(cliente.email ?? '');
+    setFormTelefono(cliente.telefono ?? '');
+    setFormRfc(cliente.rfc ?? '');
   }
 
   async function guardarCliente(evento: FormEvent<HTMLFormElement>) {
     evento.preventDefault();
-    setGuardando(true);
+    setGuardandoCliente(true);
     setError(null);
-    setExito(null);
+    setMensaje(null);
 
     const payload = {
-      nombre: form.nombre.trim(),
-      email: form.email.trim() || null,
-      telefono: form.telefono.trim() || null,
-      rfc: form.rfc.trim() || null,
-      direccion: form.direccion.trim() || null,
-      notas: form.notas.trim() || null,
+      nombre: formNombre.trim(),
+      email: formEmail.trim() || null,
+      telefono: formTelefono.trim() || null,
+      rfc: formRfc.trim() || null,
     };
 
     const consulta = editandoId
@@ -174,29 +142,48 @@ export default function DashboardClient({ email }: { email: string }) {
     if (errorGuardado) {
       setError(errorGuardado.message);
     } else {
-      setExito(editandoId ? 'Cliente actualizado.' : 'Cliente creado.');
-      reiniciarFormulario();
+      setMensaje(editandoId ? 'Cliente actualizado.' : 'Cliente creado.');
+      reiniciarForm();
       await cargarDatos();
     }
 
-    setGuardando(false);
+    setGuardandoCliente(false);
   }
 
   async function eliminarCliente(id: string, nombre: string) {
-    if (!window.confirm(`¿Eliminar a ${nombre}? Sus cotizaciones quedarán sin cliente.`)) {
-      return;
-    }
-
+    if (!window.confirm(`¿Eliminar a ${nombre}?`)) return;
     setError(null);
+    setMensaje(null);
     const { error: errorBorrado } = await supabase.from('clients').delete().eq('id', id);
-
     if (errorBorrado) {
       setError(errorBorrado.message);
       return;
     }
-
-    setExito('Cliente eliminado.');
+    setMensaje('Cliente eliminado.');
     await cargarDatos();
+  }
+
+  async function guardarPerfil() {
+    setGuardandoPerfil(true);
+    setError(null);
+    setMensaje(null);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('No hay sesión');
+
+      const { error: errorPerfil } = await supabase
+        .from('profiles')
+        .update({ full_name: nombrePerfil.trim() || null })
+        .eq('id', user.id);
+
+      if (errorPerfil) throw errorPerfil;
+      setMensaje('Perfil actualizado.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al guardar el perfil');
+    } finally {
+      setGuardandoPerfil(false);
+    }
   }
 
   async function cerrarSesion() {
@@ -205,13 +192,10 @@ export default function DashboardClient({ email }: { email: string }) {
     router.refresh();
   }
 
-  const nombreDe = (clientId: string | null) =>
-    clientes.find((c) => c.id === clientId)?.nombre ?? 'Sin cliente';
-
   return (
     <main className="min-h-screen p-6 md:p-10">
       <div className="mx-auto max-w-6xl">
-        <header className="flex flex-wrap items-start justify-between gap-4">
+        <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold">Dashboard</h1>
             <p className="mt-1 text-sm opacity-70">Sesión iniciada como {email}</p>
@@ -233,96 +217,94 @@ export default function DashboardClient({ email }: { email: string }) {
           </div>
         </header>
 
-        {error && (
-          <p className="mt-6 rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-400">
-            {error}
-          </p>
-        )}
-        {exito && (
-          <p className="mt-6 rounded border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-400">
-            {exito}
-          </p>
+        {(error || mensaje) && (
+          <div
+            className={
+              'mb-6 rounded border px-4 py-3 text-sm ' +
+              (error
+                ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400'
+                : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400')
+            }
+          >
+            {error ?? mensaje}
+          </div>
         )}
 
-        <section className="mt-8 rounded-lg border border-black/10 p-6 dark:border-white/15">
-          <h2 className="text-xl font-semibold">
-            {editandoId ? 'Editar cliente' : 'Nuevo cliente'}
-          </h2>
+        <div className="mb-8 grid grid-cols-3 gap-4">
+          <div className="rounded-lg border border-black/10 p-6 dark:border-white/15">
+            <div className="text-2xl font-medium text-blue-600">{totalClientes}</div>
+            <p className="mt-1 text-sm opacity-70">Clientes</p>
+          </div>
+          <div className="rounded-lg border border-black/10 p-6 dark:border-white/15">
+            <div className="text-2xl font-medium text-green-600">{totalCreditos}</div>
+            <p className="mt-1 text-sm opacity-70">Créditos</p>
+          </div>
+          <div className="rounded-lg border border-black/10 p-6 dark:border-white/15">
+            <div className="text-2xl font-medium text-purple-600">{totalCotizaciones}</div>
+            <p className="mt-1 text-sm opacity-70">Cotizaciones</p>
+          </div>
+        </div>
 
-          <form onSubmit={guardarCliente} className="mt-4 grid gap-4 md:grid-cols-3">
+        <section className="mb-8">
+          <h2 className="text-xl font-semibold">Mis clientes ({totalClientes})</h2>
+
+          <form
+            onSubmit={guardarCliente}
+            className="mt-4 grid gap-4 rounded-lg border border-black/10 p-4 md:grid-cols-4 dark:border-white/15"
+          >
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium">Nombre *</span>
               <input
                 type="text"
                 required
-                value={form.nombre}
-                onChange={(e) => actualizar('nombre', e.target.value)}
+                value={formNombre}
+                onChange={(e) => setFormNombre(e.target.value)}
                 className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
               />
             </label>
-
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium">Correo</span>
               <input
                 type="email"
-                value={form.email}
-                onChange={(e) => actualizar('email', e.target.value)}
+                value={formEmail}
+                onChange={(e) => setFormEmail(e.target.value)}
                 className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
               />
             </label>
-
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium">Teléfono</span>
               <input
                 type="tel"
-                value={form.telefono}
-                onChange={(e) => actualizar('telefono', e.target.value)}
+                value={formTelefono}
+                onChange={(e) => setFormTelefono(e.target.value)}
                 className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
               />
             </label>
-
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium">RFC</span>
               <input
                 type="text"
-                value={form.rfc}
-                onChange={(e) => actualizar('rfc', e.target.value)}
+                value={formRfc}
+                onChange={(e) => setFormRfc(e.target.value)}
                 className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
               />
             </label>
-
-            <label className="flex flex-col gap-1 text-sm md:col-span-2">
-              <span className="font-medium">Dirección</span>
-              <input
-                type="text"
-                value={form.direccion}
-                onChange={(e) => actualizar('direccion', e.target.value)}
-                className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1 text-sm md:col-span-3">
-              <span className="font-medium">Notas</span>
-              <textarea
-                rows={2}
-                value={form.notas}
-                onChange={(e) => actualizar('notas', e.target.value)}
-                className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
-              />
-            </label>
-
-            <div className="flex gap-3 md:col-span-3">
+            <div className="flex gap-3 md:col-span-4">
               <button
                 type="submit"
-                disabled={guardando}
+                disabled={guardandoCliente}
                 className="rounded bg-blue-600 px-5 py-2 font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-60"
               >
-                {guardando ? 'Guardando...' : editandoId ? 'Guardar cambios' : 'Crear cliente'}
+                {guardandoCliente
+                  ? 'Guardando...'
+                  : editandoId
+                    ? 'Guardar cambios'
+                    : 'Agregar cliente'}
               </button>
               {editandoId && (
                 <button
                   type="button"
-                  onClick={reiniciarFormulario}
+                  onClick={reiniciarForm}
                   className="rounded border border-black/15 px-5 py-2 font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5"
                 >
                   Cancelar
@@ -330,17 +312,11 @@ export default function DashboardClient({ email }: { email: string }) {
               )}
             </div>
           </form>
-        </section>
-
-        <section className="mt-8">
-          <h2 className="text-xl font-semibold">Clientes ({clientes.length})</h2>
 
           {cargando ? (
             <p className="mt-4 opacity-70">Cargando...</p>
-          ) : clientes.length === 0 ? (
-            <p className="mt-4 opacity-70">
-              Aún no tienes clientes. Crea el primero con el formulario.
-            </p>
+          ) : totalClientes === 0 ? (
+            <p className="mt-4 opacity-70">Aún no tienes clientes. Usa el formulario para agregar el primero.</p>
           ) : (
             <div className="mt-4 overflow-x-auto rounded-lg border border-black/10 dark:border-white/15">
               <table className="w-full border-collapse text-sm">
@@ -349,30 +325,28 @@ export default function DashboardClient({ email }: { email: string }) {
                     <th className="p-3 text-left">Nombre</th>
                     <th className="p-3 text-left">Correo</th>
                     <th className="p-3 text-left">Teléfono</th>
-                    <th className="p-3 text-left">RFC</th>
                     <th className="p-3 text-right">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {clientes.map((cliente) => (
-                    <tr key={cliente.id} className="border-b border-black/5 dark:border-white/10">
-                      <td className="p-3 font-medium">{cliente.nombre}</td>
-                      <td className="p-3">{cliente.email ?? '-'}</td>
-                      <td className="p-3">{cliente.telefono ?? '-'}</td>
-                      <td className="p-3">{cliente.rfc ?? '-'}</td>
+                  {clientes.map((c) => (
+                    <tr key={c.id} className="border-b border-black/5 dark:border-white/10">
+                      <td className="p-3 font-medium">{c.nombre}</td>
+                      <td className="p-3">{c.email ?? '-'}</td>
+                      <td className="p-3">{c.telefono ?? '-'}</td>
                       <td className="p-3">
                         <div className="flex justify-end gap-2">
                           <button
                             type="button"
-                            onClick={() => editar(cliente)}
-                            className="rounded border border-black/15 px-3 py-1 font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5"
+                            onClick={() => empezarEditar(c)}
+                            className="rounded border border-black/15 px-2 py-1 font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5"
                           >
                             Editar
                           </button>
                           <button
                             type="button"
-                            onClick={() => eliminarCliente(cliente.id, cliente.nombre)}
-                            className="rounded border border-red-500/40 px-3 py-1 font-medium text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
+                            onClick={() => eliminarCliente(c.id, c.nombre)}
+                            className="rounded border border-red-500/40 px-2 py-1 font-medium text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400"
                           >
                             Eliminar
                           </button>
@@ -386,16 +360,17 @@ export default function DashboardClient({ email }: { email: string }) {
           )}
         </section>
 
-        <section className="mt-8">
-          <h2 className="text-xl font-semibold">
-            Historial de cotizaciones ({cotizaciones.length})
-          </h2>
-
+        <section className="mb-8">
+          <h2 className="text-xl font-semibold">Historial de cotizaciones ({totalCotizaciones})</h2>
           {cargando ? (
             <p className="mt-4 opacity-70">Cargando...</p>
-          ) : cotizaciones.length === 0 ? (
+          ) : totalCotizaciones === 0 ? (
             <p className="mt-4 opacity-70">
-              Sin cotizaciones registradas. <Link className="text-blue-600 underline" href="/quoter">Crea la primera</Link>.
+              Sin cotizaciones registradas.{' '}
+              <Link className="text-blue-600 underline" href="/quoter">
+                Crea la primera
+              </Link>
+              .
             </p>
           ) : (
             <div className="mt-4 overflow-x-auto rounded-lg border border-black/10 dark:border-white/15">
@@ -411,20 +386,20 @@ export default function DashboardClient({ email }: { email: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {cotizaciones.map((cotizacion) => (
-                    <tr key={cotizacion.id} className="border-b border-black/5 dark:border-white/10">
-                      <td className="p-3">{fecha(cotizacion.created_at)}</td>
-                      <td className="p-3">{nombreDe(cotizacion.client_id)}</td>
-                      <td className="p-3">{cotizacion.input_data?.fecha_venta ?? '-'}</td>
-                      <td className="p-3">{cotizacion.input_data?.fecha_adquisicion ?? '-'}</td>
+                  {cotizaciones.map((c) => (
+                    <tr key={c.id} className="border-b border-black/5 dark:border-white/10">
+                      <td className="p-3">{new Date(c.created_at).toLocaleDateString('es-MX')}</td>
+                      <td className="p-3">{c.client_id ? c.client_id.slice(0, 8) : '-'}</td>
+                      <td className="p-3">{c.input_data?.fecha_venta ?? '-'}</td>
+                      <td className="p-3">{c.input_data?.fecha_adquisicion ?? '-'}</td>
                       <td className="p-3 text-right">
-                        {cotizacion.result_data?.base_gravable != null
-                          ? moneda.format(cotizacion.result_data.base_gravable)
+                        {c.result_data?.base_gravable != null
+                          ? moneda.format(c.result_data.base_gravable)
                           : '-'}
                       </td>
                       <td className="p-3 text-right font-medium text-blue-600">
-                        {cotizacion.result_data?.isr_a_pagar != null
-                          ? moneda.format(cotizacion.result_data.isr_a_pagar)
+                        {c.result_data?.isr_a_pagar != null
+                          ? moneda.format(c.result_data.isr_a_pagar)
                           : '-'}
                       </td>
                     </tr>
@@ -435,14 +410,17 @@ export default function DashboardClient({ email }: { email: string }) {
           )}
         </section>
 
-        <section className="mt-8">
-          <h2 className="text-xl font-semibold">Compras de créditos ({compras.length})</h2>
-
+        <section className="mb-8">
+          <h2 className="text-xl font-semibold">Mis créditos ({compras.length})</h2>
           {cargando ? (
             <p className="mt-4 opacity-70">Cargando...</p>
-          ) : compras.length === 0 ? (
+          ) : totalCreditos === 0 ? (
             <p className="mt-4 opacity-70">
-              Sin compras registradas. <Link className="text-blue-600 underline" href="/credits">Comprar créditos</Link>.
+              Sin compras de créditos registradas.{' '}
+              <Link className="text-blue-600 underline" href="/credits">
+                Compra créditos
+              </Link>
+              .
             </p>
           ) : (
             <div className="mt-4 overflow-x-auto rounded-lg border border-black/10 dark:border-white/15">
@@ -457,19 +435,48 @@ export default function DashboardClient({ email }: { email: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {compras.map((compra) => (
-                    <tr key={compra.id} className="border-b border-black/5 dark:border-white/10">
-                      <td className="p-3">{fecha(compra.created_at)}</td>
-                      <td className="p-3">{compra.package}</td>
-                      <td className="p-3 text-right">{compra.credits}</td>
-                      <td className="p-3 text-right">{moneda.format(compra.amount)}</td>
-                      <td className="p-3">{compra.status}</td>
+                  {compras.map((c) => (
+                    <tr key={c.id} className="border-b border-black/5 dark:border-white/10">
+                      <td className="p-3">{new Date(c.created_at).toLocaleDateString('es-MX')}</td>
+                      <td className="p-3">{c.package}</td>
+                      <td className="p-3 text-right">{c.credits}</td>
+                      <td className="p-3 text-right">{moneda.format(c.amount)}</td>
+                      <td className="p-3">{c.status}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+        </section>
+
+        <section>
+          <h2 className="text-xl font-semibold">Editar perfil</h2>
+          <div className="mt-4 rounded-lg border border-black/10 p-4 dark:border-white/15">
+            <p className="text-sm opacity-70">Correo: {email}</p>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="font-medium">Nombre completo</span>
+                <input
+                  type="text"
+                  value={nombrePerfil}
+                  onChange={(e) => setNombrePerfil(e.target.value)}
+                  className="rounded border border-black/15 px-3 py-2 dark:border-white/20 dark:bg-transparent"
+                  placeholder="Tu nombre"
+                />
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={guardarPerfil}
+                  disabled={guardandoPerfil}
+                  className="rounded bg-green-600 px-4 py-2 font-medium text-white transition-colors hover:bg-green-700 disabled:opacity-60"
+                >
+                  {guardandoPerfil ? 'Guardando...' : 'Guardar'}
+                </button>
+              </div>
+            </div>
+          </div>
         </section>
       </div>
     </main>
