@@ -31,6 +31,7 @@ export default function CreditsPage() {
   const [codigoCupon, setCodigoCupon] = useState('');
   const [canjeando, setCanjeando] = useState(false);
   const [creditosDisponibles, setCreditosDisponibles] = useState<number | null>(null);
+  const [modo, setModo] = useState<'paypal' | 'simulacion' | null>(null);
 
   async function cargarSaldo() {
     const [{ data: compras }, { data: cotizaciones }] = await Promise.all([
@@ -45,6 +46,21 @@ export default function CreditsPage() {
 
   useEffect(() => {
     async function cargar() {
+      const params = new URLSearchParams(window.location.search);
+
+      if (params.get('exito') === '1') {
+        const creditos = params.get('creditos');
+        setMensaje(
+          creditos
+            ? `¡Pago aprobado! ${creditos} crédito(s) agregados a tu cuenta.`
+            : '¡Pago aprobado! Créditos agregados a tu cuenta.'
+        );
+      } else if (params.get('cancelado') === '1') {
+        setError('El pago fue cancelado.');
+      } else if (params.get('error')) {
+        setError('Ocurrió un problema con el pago. Intenta de nuevo.');
+      }
+
       try {
         const [paquetesRes, comprasRes, cotizacionesRes] = await Promise.all([
           fetch('/api/paypal'),
@@ -53,7 +69,9 @@ export default function CreditsPage() {
         ]);
 
         if (!paquetesRes.ok) throw new Error('sin respuesta');
-        setPaquetes(await paquetesRes.json());
+        const paquetesData = await paquetesRes.json();
+        setModo(paquetesData.modo ?? 'simulacion');
+        setPaquetes(paquetesData);
 
         const comprados = comprasRes.data?.reduce((suma, c) => suma + c.credits, 0) ?? 0;
         const usados = cotizacionesRes.data?.length ?? 0;
@@ -72,7 +90,7 @@ export default function CreditsPage() {
     setMensaje(null);
 
     try {
-      const respuesta = await fetch('/api/paypal', {
+      const respuesta = await fetch('/api/paypal/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ paquete, monto: PRECIOS[paquete] ?? 0 }),
@@ -82,6 +100,15 @@ export default function CreditsPage() {
 
       if (!respuesta.ok) {
         setError(payload.error ?? 'No fue posible procesar el pago');
+        return;
+      }
+
+      if (payload.modo === 'paypal') {
+        if (payload.aprobacion) {
+          window.location.assign(payload.aprobacion);
+          return;
+        }
+        setError('No fue posible obtener la liga de pago de PayPal.');
         return;
       }
 
@@ -133,8 +160,9 @@ export default function CreditsPage() {
           <div>
             <h1 className="text-3xl font-bold">Créditos</h1>
             <p className="mt-2 text-sm opacity-70">
-              Compra cotizaciones o canjea un cupón. El pago está en modo simulación hasta
-              conectar las credenciales de PayPal.
+              {modo === 'paypal'
+                ? 'Compra cotizaciones con PayPal o canjea un cupón.'
+                : 'Compra cotizaciones o canjea un cupón. El pago está en modo simulación; se activa PayPal real al configurar las credenciales.'}
             </p>
           </div>
           <div

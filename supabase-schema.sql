@@ -369,3 +369,64 @@ $$;
 
 REVOKE ALL ON FUNCTION public.admin_recargar_creditos(uuid, integer, text) FROM public;
 GRANT EXECUTE ON FUNCTION public.admin_recargar_creditos(uuid, integer, text) TO authenticated;
+
+-- ============================================================
+-- Función: generar cotización con validación atómica de créditos
+-- Bloquea la fila del perfil (SELECT ... FOR UPDATE) para
+-- serializar peticiones concurrentes por usuario y evitar sobregiros.
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.generar_cotizacion(
+  in_client_id uuid,
+  in_input_data jsonb,
+  in_result_data jsonb
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  usuario uuid := auth.uid();
+  creditos_comprados integer;
+  creditos_usados integer;
+  client_valido uuid;
+  nuevo_id uuid;
+BEGIN
+  IF usuario IS NULL THEN
+    RAISE EXCEPTION 'Debes iniciar sesión';
+  END IF;
+
+  -- Serializa las peticiones del mismo usuario (previene doble gasto)
+  PERFORM 1 FROM public.profiles WHERE id = usuario FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'SIN_PERFIL';
+  END IF;
+
+  IF in_client_id IS NOT NULL THEN
+    SELECT id INTO client_valido
+    FROM public.clients
+    WHERE id = in_client_id AND user_id = usuario;
+  END IF;
+
+  SELECT COALESCE(SUM(credits), 0) INTO creditos_comprados
+  FROM public.credit_purchases
+  WHERE user_id = usuario AND status = 'completed';
+
+  SELECT count(*) INTO creditos_usados
+  FROM public.quote_records
+  WHERE user_id = usuario;
+
+  IF creditos_comprados - creditos_usados < 1 THEN
+    RAISE EXCEPTION 'SIN_CREDITOS';
+  END IF;
+
+  INSERT INTO public.quote_records (user_id, client_id, input_data, result_data)
+  VALUES (usuario, client_valido, in_input_data, in_result_data)
+  RETURNING id INTO nuevo_id;
+
+  RETURN nuevo_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.generar_cotizacion(uuid, jsonb, jsonb) FROM public;
+GRANT EXECUTE ON FUNCTION public.generar_cotizacion(uuid, jsonb, jsonb) TO authenticated;
