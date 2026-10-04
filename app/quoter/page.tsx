@@ -19,6 +19,11 @@ interface ResultadoISR {
   udi_usada: number;
   factor_ajuste: number;
   inpc_ratio: number;
+  inpc_venta: number;
+  inpc_adquisicion: number;
+  anos_tenencia: number;
+  valor_construccion_ajustado: number;
+  valor_presente: number;
   movimientos: MovimientoISR[];
 }
 
@@ -185,6 +190,7 @@ export default function QuoterPage() {
   const [nuevoClienteTelefono, setNuevoClienteTelefono] = useState('');
   const [creditosDisponibles, setCreditosDisponibles] = useState<number | null>(null);
   const [sinCreditos, setSinCreditos] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
 
   const pasoActual = PASOS[paso];
   const esUltimo = paso === PASOS.length - 1;
@@ -234,6 +240,7 @@ export default function QuoterPage() {
     setError(null);
     setResultado(null);
     setSinCreditos(false);
+    setAviso(null);
 
     try {
       const respuesta = await fetch('/api/calcular', {
@@ -253,6 +260,7 @@ export default function QuoterPage() {
       }
 
       setResultado(payload.resultado as ResultadoISR);
+      if (payload.aviso) setAviso(payload.aviso);
     } catch {
       setError('Error de conexión al solicitar el cálculo');
     } finally {
@@ -338,6 +346,7 @@ export default function QuoterPage() {
     setResultado(null);
     setError(null);
     setSinCreditos(false);
+    setAviso(null);
     setPaso(0);
     setDetalleAbierto(false);
   }
@@ -387,15 +396,24 @@ export default function QuoterPage() {
   <div class="subtitulo">Generada el ${new Date().toLocaleString('es-MX')}</div>
 
   <div class="campo"><span class="etiqueta">Cliente</span><span class="valor">${escapar(clienteSeleccionado?.nombre ?? 'Sin cliente asociado')}</span></div>
+  ${clienteSeleccionado?.email ? linea('Correo', escapar(clienteSeleccionado.email)) : ''}
+  ${clienteSeleccionado?.telefono ? linea('Teléfono', escapar(clienteSeleccionado.telefono)) : ''}
+  ${clienteSeleccionado?.rfc ? linea('RFC', escapar(clienteSeleccionado.rfc)) : ''}
 
   <h2>Datos de la operación</h2>
   ${linea('Fecha de venta', form.fecha_venta)}
   ${linea('Fecha de adquisición', form.fecha_adquisicion)}
+  ${linea('Años de tenencia', String(resultado?.anos_tenencia ?? 0))}
   ${linea('Valor de escrituración', moneda.format(Number(form.valor_escritura) || 0))}
   ${linea('Porcentaje de enajenante', `${form.porcentaje_enajenante}%`)}
   ${linea('Valor del terreno', moneda.format(Number(form.valor_terreno) || 0))}
   ${linea('Valor de construcción', moneda.format(Number(form.valor_constr) || 0))}
   ${linea('Operación exenta', form.exenta ? 'Sí' : 'No')}
+  ${linea('INPC de venta', String(resultado?.inpc_venta ?? 0))}
+  ${linea('INPC de adquisición', String(resultado?.inpc_adquisicion ?? 0))}
+  ${linea('Valor UDI (referencia)', String(resultado?.udi_usada ?? 0))}
+  ${linea('Valor de construcción ajustado', moneda.format(resultado?.valor_construccion_ajustado ?? 0))}
+  ${linea('Valor presente del inmueble', moneda.format(resultado?.valor_presente ?? 0))}
 
   <h2>Movimientos del cálculo</h2>
   <table>
@@ -465,13 +483,49 @@ export default function QuoterPage() {
             id="area-imprimible"
             className="mt-8 rounded-lg border border-black/10 p-6 print-area dark:border-white/15"
           >
+            {aviso && (
+              <div className="no-print mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+                {aviso}
+              </div>
+            )}
+
             <div>
               <h2 className="text-xl font-semibold">Resultado de la cotización</h2>
               <p className="mt-1 text-sm opacity-70">
-                Cliente: {clienteSeleccionado?.nombre ?? 'Sin cliente asociado'} ·{' '}
+                Cliente: {clienteSeleccionado?.nombre ?? 'Sin cliente asociado'} ·
                 {new Date().toLocaleString('es-MX')}
               </p>
             </div>
+
+            <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide opacity-70">
+              Datos del cliente
+            </h3>
+            <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Nombre</dt>
+                <dd className="font-semibold">
+                  {clienteSeleccionado?.nombre ?? 'Sin cliente asociado'}
+                </dd>
+              </div>
+              {clienteSeleccionado?.email && (
+                <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                  <dt className="opacity-70">Correo</dt>
+                  <dd className="font-semibold">{clienteSeleccionado.email}</dd>
+                </div>
+              )}
+              {clienteSeleccionado?.telefono && (
+                <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                  <dt className="opacity-70">Teléfono</dt>
+                  <dd className="font-semibold">{clienteSeleccionado.telefono}</dd>
+                </div>
+              )}
+              {clienteSeleccionado?.rfc && (
+                <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                  <dt className="opacity-70">RFC</dt>
+                  <dd className="font-semibold">{clienteSeleccionado.rfc}</dd>
+                </div>
+              )}
+            </dl>
 
             <h3 className="mt-5 text-sm font-semibold uppercase tracking-wide opacity-70">
               Datos de la operación
@@ -484,6 +538,10 @@ export default function QuoterPage() {
               <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
                 <dt className="opacity-70">Fecha de adquisición</dt>
                 <dd className="font-semibold">{form.fecha_adquisicion}</dd>
+              </div>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Años de tenencia</dt>
+                <dd className="font-semibold">{resultado.anos_tenencia}</dd>
               </div>
               <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
                 <dt className="opacity-70">Valor de escrituración</dt>
@@ -507,9 +565,31 @@ export default function QuoterPage() {
                   {moneda.format(Number(form.valor_constr) || 0)}
                 </dd>
               </div>
-              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10 sm:col-span-2">
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
                 <dt className="opacity-70">Operación exenta</dt>
                 <dd className="font-semibold">{form.exenta ? 'Sí' : 'No'}</dd>
+              </div>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">INPC de venta</dt>
+                <dd className="font-semibold">{resultado.inpc_venta}</dd>
+              </div>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">INPC de adquisición</dt>
+                <dd className="font-semibold">{resultado.inpc_adquisicion}</dd>
+              </div>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Valor UDI (referencia)</dt>
+                <dd className="font-semibold">{resultado.udi_usada}</dd>
+              </div>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+                <dt className="opacity-70">Valor de construcción ajustado</dt>
+                <dd className="font-semibold">
+                  {moneda.format(resultado.valor_construccion_ajustado)}
+                </dd>
+              </div>
+              <div className="flex justify-between border-b border-black/5 py-1 dark:border-white/10 sm:col-span-2">
+                <dt className="opacity-70">Valor presente del inmueble</dt>
+                <dd className="font-semibold">{moneda.format(resultado.valor_presente)}</dd>
               </div>
             </dl>
 

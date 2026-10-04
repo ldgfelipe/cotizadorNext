@@ -160,11 +160,14 @@ export async function POST(request: Request) {
           { status: 403 }
         );
       }
+      // El cálculo es correcto; el guardado falló (p.ej. la RPC aún no está
+      // creada en este proyecto). Mostramos el resultado con un aviso.
       console.error('Error guardando cotización:', errorRpc);
-      return NextResponse.json(
-        { error: 'No fue posible guardar la cotización' },
-        { status: 500 }
-      );
+      return NextResponse.json({
+        success: true,
+        resultado,
+        aviso: 'No fue posible guardar la cotización en tu historial. Verifica que el esquema de la base de datos esté actualizado.',
+      });
     }
 
     return NextResponse.json({ success: true, idCotizacion, resultado });

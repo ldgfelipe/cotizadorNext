@@ -16,6 +16,14 @@ interface Cliente {
   created_at: string;
 }
 
+interface Movimiento {
+  paso: number;
+  titulo: string;
+  detalle: string;
+  monto: number | null;
+  categoria?: string;
+}
+
 interface Cotizacion {
   id: string;
   client_id: string | null;
@@ -23,8 +31,20 @@ interface Cotizacion {
     fecha_venta?: string;
     fecha_adquisicion?: string;
     valor_escritura?: number;
-  };
-  result_data: { base_gravable?: number; isr_a_pagar?: number };
+  } & Record<string, unknown>;
+  result_data: {
+    base_gravable?: number;
+    isr_a_pagar?: number;
+    inpc_venta?: number;
+    inpc_adquisicion?: number;
+    udi_usada?: number;
+    anos_tenencia?: number;
+    factor_ajuste?: number;
+    inpc_ratio?: number;
+    valor_construccion_ajustado?: number;
+    valor_presente?: number;
+    movimientos?: Movimiento[];
+  } & Record<string, unknown>;
   created_at: string;
 }
 
@@ -62,6 +82,10 @@ export default function DashboardClient({ email }: { email: string }) {
 
   const [nombrePerfil, setNombrePerfil] = useState('');
   const [guardandoPerfil, setGuardandoPerfil] = useState(false);
+
+  const [cotizacionAbierta, setCotizacionAbierta] = useState<string | null>(null);
+
+  const valorEmpresa = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 2 });
 
   const cargarDatos = useCallback(async () => {
     const [cRes, coRes, cpRes] = await Promise.all([
@@ -193,6 +217,127 @@ export default function DashboardClient({ email }: { email: string }) {
     await supabase.auth.signOut();
     router.push('/login');
     router.refresh();
+  }
+
+  const clienteMap = new Map(clientes.map((c) => [c.id, c.nombre]));
+
+  function nombreCliente(id: string | null) {
+    if (!id) return 'Sin cliente';
+    return clienteMap.get(id) ?? id.slice(0, 8);
+  }
+
+  function monedaVal(valor: unknown) {
+    const num = Number(valor);
+    return Number.isFinite(num) ? moneda.format(num) : '-';
+  }
+
+  function cadena(valor: unknown) {
+    return valor == null || valor === '' ? '-' : String(valor);
+  }
+
+  function renderDetalleCotizacion(co: Cotizacion) {
+    const entrada = co.input_data ?? {};
+    const resultado = co.result_data ?? {};
+    const movimientos = (resultado.movimientos as Movimiento[] | undefined) ?? [];
+
+    const itemsEntrada: Array<[string, string]> = [
+      ['Fecha de venta', cadena(entrada.fecha_venta)],
+      ['Fecha de adquisición', cadena(entrada.fecha_adquisicion)],
+      ['Años de tenencia', cadena(resultado.anos_tenencia)],
+      ['Valor de escrituración', monedaVal(entrada.valor_escritura)],
+      ['Porcentaje de enajenante', `${cadena(entrada.porcentaje_enajenante)}%`],
+      ['Valor del terreno', monedaVal(entrada.valor_terreno)],
+      ['Valor de construcción', monedaVal(entrada.valor_constr)],
+      ['Operación exenta', entrada.exenta ? 'Sí' : 'No'],
+      ['INPC de venta', cadena(resultado.inpc_venta)],
+      ['INPC de adquisición', cadena(resultado.inpc_adquisicion)],
+      ['Valor UDI (referencia)', cadena(resultado.udi_usada)],
+      ['Factor de ajuste', cadena(resultado.factor_ajuste)],
+      ['Ratio INPC', cadena(resultado.inpc_ratio)],
+      ['Valor de construcción ajustado', monedaVal(resultado.valor_construccion_ajustado)],
+      ['Valor presente del inmueble', monedaVal(resultado.valor_presente)],
+    ];
+
+    return (
+      <div className="mt-4 rounded-lg border border-black/10 bg-black/[0.02] p-4 md:p-6 dark:border-white/15 dark:bg-white/[0.03]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-base font-semibold">
+            Detalle de cotización · {nombreCliente(co.client_id)}
+          </h3>
+          <button
+            type="button"
+            onClick={() => setCotizacionAbierta(null)}
+            className="rounded border border-black/15 px-3 py-1 text-sm font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5"
+          >
+            Cerrar
+          </button>
+        </div>
+
+        <h4 className="mt-4 text-xs font-semibold uppercase tracking-wide opacity-70">
+          Datos de la operación
+        </h4>
+        <div className="mt-2 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          {itemsEntrada.map(([etiqueta, valor]) => (
+            <div key={etiqueta} className="flex justify-between border-b border-black/5 py-1 dark:border-white/10">
+              <span className="opacity-70">{etiqueta}</span>
+              <span className="font-semibold">{valor}</span>
+            </div>
+          ))}
+        </div>
+
+        <h4 className="mt-5 text-xs font-semibold uppercase tracking-wide opacity-70">
+          Movimientos del cálculo
+        </h4>
+        {movimientos.length === 0 ? (
+          <p className="mt-2 text-sm opacity-70">Sin movimientos guardados para esta cotización.</p>
+        ) : (
+          <div className="mt-2 overflow-x-auto rounded-lg border border-black/10 dark:border-white/15">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-black/10 dark:border-white/15">
+                  <th className="p-2 text-left">Paso</th>
+                  <th className="p-2 text-left">Concepto</th>
+                  <th className="p-2 text-left">Detalle</th>
+                  <th className="p-2 text-left">Categoría</th>
+                  <th className="p-2 text-right">Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movimientos.map((m, i) => (
+                  <tr key={i} className="border-b border-black/5 dark:border-white/10">
+                    <td className="p-2 text-right">{m.paso}</td>
+                    <td className="p-2 font-medium">{m.titulo}</td>
+                    <td className="p-2 opacity-80">{m.detalle}</td>
+                    <td className="p-2 opacity-80">{m.categoria ?? '-'}</td>
+                    <td className="p-2 text-right font-semibold">
+                      {m.monto == null ? '—' : valorEmpresa.format(m.monto)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-black/10 bg-blue-50 dark:border-white/15 dark:bg-blue-500/10">
+                  <td className="p-2 font-semibold" colSpan={4}>
+                    Base gravable
+                  </td>
+                  <td className="p-2 text-right font-bold">
+                    {monedaVal(resultado.base_gravable)}
+                  </td>
+                </tr>
+                <tr className="bg-blue-100 dark:bg-blue-500/20">
+                  <td className="p-2 font-semibold" colSpan={4}>
+                    ISR a pagar
+                  </td>
+                  <td className="p-2 text-right font-bold text-blue-700 dark:text-blue-300">
+                    {monedaVal(resultado.isr_a_pagar)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -386,13 +531,14 @@ export default function DashboardClient({ email }: { email: string }) {
                     <th className="p-3 text-left">F. adquisición</th>
                     <th className="p-3 text-right">Base gravable</th>
                     <th className="p-3 text-right">ISR</th>
+                    <th className="p-3 text-right">Detalle</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cotizaciones.map((c) => (
                     <tr key={c.id} className="border-b border-black/5 dark:border-white/10">
                       <td className="p-3">{new Date(c.created_at).toLocaleDateString('es-MX')}</td>
-                      <td className="p-3">{c.client_id ? c.client_id.slice(0, 8) : '-'}</td>
+                      <td className="p-3">{nombreCliente(c.client_id)}</td>
                       <td className="p-3">{c.input_data?.fecha_venta ?? '-'}</td>
                       <td className="p-3">{c.input_data?.fecha_adquisicion ?? '-'}</td>
                       <td className="p-3 text-right">
@@ -405,12 +551,30 @@ export default function DashboardClient({ email }: { email: string }) {
                           ? moneda.format(c.result_data.isr_a_pagar)
                           : '-'}
                       </td>
+                      <td className="p-3">
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCotizacionAbierta(cotizacionAbierta === c.id ? null : c.id)
+                            }
+                            className="rounded border border-black/15 px-2 py-1 font-medium transition-colors hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/5"
+                          >
+                            {cotizacionAbierta === c.id ? 'Ocultar' : 'Ver detalle'}
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+          {cotizacionAbierta &&
+            ((() => {
+              const abierta = cotizaciones.find((c) => c.id === cotizacionAbierta);
+              return abierta ? renderDetalleCotizacion(abierta) : null;
+            })())}
         </section>
 
         <section className="mb-8">

@@ -33,6 +33,11 @@ export interface ResultadoISR {
   udi_usada: number;
   factor_ajuste: number;
   inpc_ratio: number;
+  inpc_venta: number;
+  inpc_adquisicion: number;
+  anos_tenencia: number;
+  valor_construccion_ajustado: number;
+  valor_presente: number;
   movimientos: MovimientoISR[];
 }
 
@@ -196,6 +201,11 @@ export async function procesarCotizacion(
     udi_usada: UDI_REFERENCIA,
     factor_ajuste: factorAjuste,
     inpc_ratio: inpcRatio,
+    inpc_venta: inpcVenta,
+    inpc_adquisicion: inpcAdquisicion,
+    anos_tenencia: anosTenencia,
+    valor_construccion_ajustado: valorConstruccionAjustado,
+    valor_presente: valorPresente,
     movimientos,
   };
 }
